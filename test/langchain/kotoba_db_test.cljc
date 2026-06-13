@@ -188,3 +188,56 @@
     ((:transact! api) test-conn [])
     (is (= "Bearer test-token"
            (get-in (first @captured) [:headers "authorization"])))))
+
+;; ─── CACAO auth ──────────────────────────────────────────────────────────────
+
+(deftest cacao-auth-forwarded
+  (let [captured (atom [])
+        cacao-conn (kdb/kotoba-conn "http://kotoba.test:8080" "k51testgraph"
+                                    {:cacao "base64cacaoABC" :did "did:key:zABC"})
+        caps {:http-fn   (fn [req]
+                           (swap! captured conj req)
+                           {:status 200
+                            :body   (pr-str {:status "ok" :tx_cid "x"
+                                             :commit_cid "y" :graph "g"
+                                             :ipns_name "k" :ipns_sequence 0
+                                             :ipns_valid_until "" :index_roots {}
+                                             :datom_count 0 :journal_cids []
+                                             :tempids {} :datoms []})})
+              :json-write pr-str
+              :json-read  edn/read-string}
+        api (kdb/kotoba-api caps)]
+    ((:transact! api) cacao-conn [])
+    (testing "sends CACAO authorization header"
+      (is (= "CACAO base64cacaoABC"
+             (get-in (first @captured) [:headers "authorization"]))))
+    (testing "sends x-kotoba-did header"
+      (is (= "did:key:zABC"
+             (get-in (first @captured) [:headers "x-kotoba-did"]))))
+    (testing "sends cacao_b64 in request body"
+      (let [body (edn/read-string (:body (first @captured)))]
+        (is (= "base64cacaoABC" (:cacao_b64 body)))))))
+
+;; ─── kg-ingest! ──────────────────────────────────────────────────────────────
+
+(deftest kg-ingest!-sends-correct-request
+  (let [captured (atom [])
+        caps     (mock-caps captured
+                            (fn [_nsid _body]
+                              {:ok true :entity_cid "cid-x"
+                               :kind "langgraph/checkpoint" :quad_count 6}))
+        entity   {:id     "thread-A/0"
+                  :kind   "langgraph/checkpoint"
+                  :claims [{:pred "thread" :value "thread-A"}
+                           {:pred "step"   :value "0"}]}]
+    (kdb/kg-ingest! caps test-conn entity)
+    (testing "posts to correct NSID"
+      (is (= "ai.gftd.apps.kotobase.kg.ingest" (:nsid (first @captured)))))
+    (testing "sends id and kind"
+      (let [body (:body (first @captured))]
+        (is (= "thread-A/0" (:id body)))
+        (is (= "langgraph/checkpoint" (:kind body)))))
+    (testing "sends claims"
+      (is (= [{:pred "thread" :value "thread-A"}
+              {:pred "step"   :value "0"}]
+             (:claims (:body (first @captured))))))))

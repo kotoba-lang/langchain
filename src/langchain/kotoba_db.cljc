@@ -29,15 +29,24 @@
 
 ;; ─── connection map ───────────────────────────────────────────────────────────
 
+(def KG-GRAPH-CID
+  "Multibase CID of the kotobase-kg-v1 named graph (sha256 of b\"kotobase-kg-v1\").
+  Pass as :graph to kotoba-conn when reading kg.ingest data via datomic.q."
+  "bafyreiglzym7s24os6nki3aknbg2d6dncy5dadwjftavcnuarkdswz6afa")
+
 (defn kotoba-conn
   "Creates a kotoba connection map (not an atom — state lives on the server).
 
    url   – kotoba-server base URL, e.g. \"http://149.28.207.62:8080\"
    graph – IPNS name or CID multibase of the target named graph
-   opts  – :token (optional Bearer JWT for CACAO-gated graphs)"
+   opts  – :token  Bearer JWT
+           :cacao  base64-CBOR CACAO string (for CACAO-gated endpoints)
+           :did    DID string (required with :cacao; sent as x-kotoba-did)"
   ([url graph] (kotoba-conn url graph {}))
-  ([url graph {:keys [token]}]
-   {:kotoba/url url :kotoba/graph graph :kotoba/token token}))
+  ([url graph {:keys [token cacao did]}]
+   (cond-> {:kotoba/url url :kotoba/graph graph}
+     token (assoc :kotoba/token token)
+     cacao (assoc :kotoba/cacao cacao :kotoba/did did))))
 
 ;; ─── private helpers ──────────────────────────────────────────────────────────
 
@@ -48,7 +57,10 @@
   (cond-> {"content-type" "application/json"
            "accept"       "application/json"}
     (:kotoba/token conn) (assoc "authorization"
-                                (str "Bearer " (:kotoba/token conn)))))
+                                (str "Bearer " (:kotoba/token conn)))
+    (:kotoba/cacao conn) (-> (assoc "authorization"
+                                    (str "CACAO " (:kotoba/cacao conn)))
+                             (assoc "x-kotoba-did" (:kotoba/did conn)))))
 
 (defn- post! [{:keys [http-fn json-write json-read]} conn nsid body]
   (let [resp (http-fn {:url     (xrpc-url conn nsid)
@@ -102,8 +114,9 @@
   {:transact!
    (fn [conn tx-data]
      (post! host-caps conn "ai.gftd.apps.kotobase.datomic.transact"
-            {:graph  (:kotoba/graph conn)
-             :tx_edn (pr-str (vec tx-data))})
+            (cond-> {:graph  (:kotoba/graph conn)
+                     :tx_edn (pr-str (vec tx-data))}
+              (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))
      ;; tx-report stub — checkpointer only needs side-effect, not tempids
      {:tx-data tx-data})
 
@@ -135,3 +148,25 @@
      (:entity (post! host-caps conn "ai.gftd.apps.kotobase.datomic.entid"
                      {:graph     (:kotoba/graph conn)
                       :ident_edn (pr-str eid)})))})
+
+;; ─── kg.ingest surface ────────────────────────────────────────────────────────
+
+(defn kg-ingest!
+  "POST one entity to ai.gftd.apps.kotobase.kg.ingest.
+
+   Writes to the kotobase-kg-v1 named graph (shared multi-tenant KG).
+   Auth: Bearer JWT in conn is sufficient; CACAO is also forwarded when present.
+
+   host-caps – {:http-fn :json-write :json-read}
+   conn      – kotoba-conn (only url + auth are used; :kotoba/graph is ignored)
+   entity    – {:id    string          ; unique entity ID, e.g. \"<thread>/<step>\"
+                :kind  string          ; entity type, e.g. \"langgraph/checkpoint\"
+                :claims [{:pred str :value str}]  ; free-form key-value pairs
+                :relations [{:pred str :dst-id str}]  ; optional edges}"
+  [host-caps conn entity]
+  (post! host-caps conn "ai.gftd.apps.kotobase.kg.ingest"
+         (cond-> {:id     (:id entity)
+                  :kind   (:kind entity)
+                  :claims (vec (:claims entity []))}
+           (seq (:relations entity)) (assoc :relations (vec (:relations entity)))
+           (:kotoba/cacao conn)      (assoc :cacao_b64 (:kotoba/cacao conn)))))
