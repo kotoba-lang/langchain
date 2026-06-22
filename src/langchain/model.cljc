@@ -142,3 +142,129 @@
         (when-not (and status (<= 200 status 299))
           (throw (ex-info "Anthropic API error" {:status status :body resp-body})))
         (parse-response (json-read resp-body))))))
+
+;; ───────────────────── OpenAI-compatible adapter ─────────────────────
+;; Targets any OpenAI /v1/chat/completions endpoint — OpenAI, **Ollama**
+;; (http://localhost:11434/v1/chat/completions), Gemini's OpenAI-compatible
+;; endpoint, vLLM, etc. Differences from Anthropic: `system` is an ordinary
+;; message (not hoisted), assistant tool calls are a `tool_calls` array with
+;; JSON-STRING arguments, and tool results use role "tool". Anthropic-style
+;; image blocks ({:type "image" :source {:type "base64" …}}) are converted to
+;; OpenAI `image_url` parts; an image-bearing tool result is delivered as a
+;; short tool ack followed by a user message carrying the image (OpenAI tool
+;; messages must be text), so a vision agent (computer-use screenshots) works.
+
+(def ^:private openai-url "https://api.openai.com/v1/chat/completions")
+(def default-openai-model "gpt-4o-mini")
+
+(defn- block->openai-part [b]
+  (cond
+    (string? b) {:type "text" :text b}
+    (= "text" (:type b)) {:type "text" :text (:text b)}
+    (= "image" (:type b))
+    (let [{:keys [media_type data url]} (:source b)]
+      {:type "image_url"
+       :image_url {:url (or url (str "data:" (or media_type "image/png") ";base64," data))}})
+    :else {:type "text" :text (str b)}))
+
+(defn- content->openai [content]
+  (cond
+    (string? content) content
+    (nil? content) ""
+    (sequential? content) (mapv block->openai-part content)
+    :else (str content)))
+
+(defn- text-of [parts]
+  (if (string? parts)
+    parts
+    (apply str (keep #(when (= "text" (:type %)) (:text %)) parts))))
+
+(defn- emit-openai
+  "One langchain message → one or more OpenAI messages (json-write serializes
+  tool-call arguments). An image-bearing tool result splits into a tool ack +
+  a user image message."
+  [json-write {:keys [role content tool-calls tool-call-id]}]
+  (case role
+    :system [{:role "system" :content (text-of (content->openai content))}]
+    :user   [{:role "user" :content (content->openai content)}]
+    :assistant [(cond-> {:role "assistant" :content (text-of (content->openai content))}
+                  (seq tool-calls)
+                  (assoc :tool_calls
+                         (vec (for [{:keys [id name input]} tool-calls]
+                                {:id id :type "function"
+                                 :function {:name name
+                                            :arguments (json-write (or input {}))}}))))]
+    :tool (let [oc (content->openai content)]
+            (if (string? oc)
+              [{:role "tool" :tool_call_id tool-call-id :content oc}]
+              (let [txt (text-of oc)]
+                [{:role "tool" :tool_call_id tool-call-id
+                  :content (if (= "" txt) "[image returned in the following message]" txt)}
+                 {:role "user" :content oc}])))
+    [{:role (name role) :content (text-of (content->openai content))}]))
+
+(defn openai-request-body
+  "Builds an OpenAI chat-completions request body from langchain messages + opts.
+  `json-write` serializes tool-call arguments. Exposed for testing."
+  [json-write messages {:keys [model max-tokens tools system] :as _opts}]
+  (let [sys (or system
+                (some #(when (= :system (:role %)) (:content %)) messages))
+        non-sys (remove #(= :system (:role %)) messages)
+        msgs (cond->> non-sys sys (cons {:role :system :content sys}))
+        body {:model (or model default-openai-model)
+              :messages (vec (mapcat #(emit-openai json-write %) msgs))}]
+    (cond-> body
+      max-tokens (assoc :max_tokens max-tokens)
+      (seq tools) (assoc :tools (mapv tool/->openai tools)))))
+
+(defn parse-openai-response
+  "OpenAI chat-completions response → assistant message. `json-read` parses
+  tool-call argument JSON strings. Exposed for testing."
+  [json-read {:keys [choices usage] :as resp}]
+  (let [msg (-> choices first :message)]
+    (when (nil? msg)
+      (throw (ex-info "OpenAI API: no choices in response" {:response resp})))
+    (let [finish (-> choices first :finish_reason)
+          text (or (:content msg) "")
+          calls (vec (for [{:keys [id function]} (:tool_calls msg)]
+                       {:id id
+                        :name (:name function)
+                        :input (let [a (:arguments function)]
+                                 (cond
+                                   (map? a) a
+                                   (and (string? a) (not= "" a)) (json-read a)
+                                   :else {}))}))]
+      (cond-> {:role :assistant :content text :stop-reason finish}
+        (seq calls) (assoc :tool-calls calls)
+        usage (assoc :usage usage)))))
+
+(defn openai-model
+  "OpenAI-compatible chat model (/v1/chat/completions). Works against OpenAI,
+  Ollama, Gemini's OpenAI-compatible endpoint, vLLM, etc.
+
+    (openai-model {:url \"http://localhost:11434/v1/chat/completions\"
+                   :model \"gemma…\"
+                   :http-fn host-fetch :json-write … :json-read …})
+
+  :api-key is optional (omit for a local Ollama)."
+  [{:keys [api-key model max-tokens http-fn json-write json-read url]
+    :or {url openai-url
+         #?@(:cljs [json-write (fn [m] (js/JSON.stringify (clj->js m)))
+                    json-read (fn [s] (js->clj (js/JSON.parse s) :keywordize-keys true))])}}]
+  (when-not http-fn
+    (throw (ex-info ":http-fn must be injected (host capability)" {})))
+  (when-not (and json-write json-read)
+    (throw (ex-info ":json-write/:json-read must be injected on this host" {})))
+  (reify ChatModel
+    (-generate [_ messages opts]
+      (let [body (openai-request-body json-write messages
+                                      (merge {:model model :max-tokens max-tokens} opts))
+            {:keys [status] resp-body :body}
+            (http-fn {:url url
+                      :method :post
+                      :headers (cond-> {"content-type" "application/json"}
+                                 api-key (assoc "authorization" (str "Bearer " api-key)))
+                      :body (json-write body)})]
+        (when-not (and status (<= 200 status 299))
+          (throw (ex-info "OpenAI API error" {:status status :body resp-body})))
+        (parse-openai-response json-read (json-read resp-body))))))
