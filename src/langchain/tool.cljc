@@ -42,3 +42,12 @@
   {:name (:name t)
    :description (:description t)
    :input_schema (:schema t)})
+
+(defn ->openai
+  "Converts a tool to the OpenAI chat-completions function-tool wire format
+  (also accepted by Ollama, Gemini's OpenAI-compatible endpoint, vLLM, …)."
+  [t]
+  {:type "function"
+   :function {:name (:name t)
+              :description (:description t)
+              :parameters (:schema t)}})
