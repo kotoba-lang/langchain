@@ -5,10 +5,21 @@
  ;; in-language JSON parser that replaces the old host-injected seam. langchain
  ;; is a consumer of kotoba-lang/json (a real vertical lib depending on a
  ;; foundational-stdlib lib; M5 for json).
+ ;;
+ ;; langchain.jvm (the http-kit/jsonista host-fn reference impl) is JVM-only
+ ;; (behind #?(:clj ...) reader conditionals) and intentionally does NOT pull
+ ;; http-kit/jsonista into the main :deps -- that would break the zero-dep
+ ;; promise for every SCI/WASM/CLJS consumer of the pure core. Consumers of
+ ;; langchain.jvm bring their own http-kit/jsonista (every current one
+ ;; already does, for its own server needs); the :test alias supplies them
+ ;; for this repo's own tests.
  :deps {io.github.kotoba-lang/json {:git/sha "deb01e68fc6ddd936953575ef54f06dc26f89640"}}
  :aliases
  {:test {:extra-paths ["test"]
          :extra-deps {io.github.cognitect-labs/test-runner
-                      {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
+                      {:git/tag "v0.5.1" :git/sha "dfb30dd"}
+                      ;; langchain.jvm-test exercises the JVM :clj branch
+                      http-kit/http-kit {:mvn/version "2.8.0"}
+                      metosin/jsonista  {:mvn/version "0.3.11"}}
          :main-opts ["-m" "cognitect.test-runner"]
          :exec-fn cognitect.test-runner.api/test}}}
