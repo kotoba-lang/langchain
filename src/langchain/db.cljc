@@ -262,9 +262,22 @@
 (defn- parse-query [query]
   (if (map? query)
     query
-    (->> (partition-by #{:find :in :where :with} query)
-         (partition 2)
-         (reduce (fn [m [[k] v]] (assoc m k (vec v))) {}))))
+    (let [groups (partition-by #{:find :in :where :with} query)]
+      ;; partition-by's predicate here returns the matched keyword itself
+      ;; (not a plain boolean), so two ADJACENT markers with nothing in
+      ;; between (e.g. `:find :where ...`, a realistic typo -- forgetting
+      ;; the var) split into two separate single-element groups instead of
+      ;; merging, breaking the intended [marker value marker value ...]
+      ;; alternation and yielding an odd total group count. Without this
+      ;; check, `(partition 2 groups)` would silently drop the last
+      ;; unpaired group -- e.g. `[:find :where [?x :attr ?v]]` silently
+      ;; parses to `{:find [:where]}`, :where vanishes entirely (never
+      ;; assoc'd), and eval-clauses over a nil :where is a silent no-op --
+      ;; a malformed query returns a bogus result instead of erroring.
+      (when (odd? (count groups))
+        (throw (ex-info "langchain.db: malformed query -- a :find/:in/:where/:with marker must be followed by at least one value before the next marker (or end of query)"
+                         {:query query})))
+      (reduce (fn [m [[k] v]] (assoc m k (vec v))) {} (partition 2 groups)))))
 
 (defn- bind-input
   "Folds one :in binding spec + value into the frame seq."

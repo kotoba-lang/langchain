@@ -109,9 +109,15 @@
 (defn- parse-find-spec [query]
   (let [q (if (map? query)
              query
-             (->> (partition-by #{:find :in :where :with} query)
-                  (partition 2)
-                  (reduce (fn [m [[k] v]] (assoc m k (vec v))) {})))]
+             (let [groups (partition-by #{:find :in :where :with} query)]
+               ;; same malformed-query hazard as langchain.db/parse-query
+               ;; (independently duplicated logic, not shared code) -- see
+               ;; that fn's docstring for the full odd-group-count/silent-
+               ;; drop rationale.
+               (when (odd? (count groups))
+                 (throw (ex-info "langchain.kotoba-db: malformed query -- a :find/:in/:where/:with marker must be followed by at least one value before the next marker (or end of query)"
+                                 {:query query})))
+               (reduce (fn [m [[k] v]] (assoc m k (vec v))) {} (partition 2 groups))))]
     (:find q)))
 
 (defn- project-rows

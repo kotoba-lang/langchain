@@ -120,6 +120,25 @@
                               [?e :person/id "bob"])]
                  dbv)))))
 
+(deftest malformed-query-with-adjacent-markers-throws-instead-of-silently-misparsing
+  (testing "a :find/:in/:where/:with marker immediately followed by another
+            marker (a realistic typo -- e.g. forgetting the var) used to
+            silently parse to an INCOMPLETE query map instead of erroring:
+            partition-by's predicate returns the matched keyword itself,
+            so two adjacent markers split into separate single-element
+            groups, breaking the intended [marker value marker value ...]
+            alternation and yielding an odd group count -- `(partition 2
+            ...)` then silently dropped the last unpaired group, so
+            `[:find :where [?x :attr ?v]]` used to parse to `{:find
+            [:where]}` with :where never assoc'd at all, and eval-clauses
+            over a nil :where was a silent no-op returning a bogus result
+            instead of erroring"
+    (let [conn (conn-with-people)
+          dbv (db/db conn)]
+      (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                            #"malformed query"
+                            (db/q '[:find :where [?e :person/name ?n]] dbv))))))
+
 (deftest as-of-test
   (let [conn (db/create-conn schema)
         r1 (db/transact! conn [{:person/id "alice" :person/age 30}])
