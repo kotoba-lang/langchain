@@ -117,6 +117,19 @@
     (testing "projects relation as set of tuples"
       (is (= #{[1 :a] [2 :b]} res)))))
 
+(deftest q-with-malformed-marker-sequence-throws-instead-of-silently-misparsing
+  (testing "same hazard as langchain.db/parse-query (independently duplicated
+            logic here, not shared code) -- an adjacent-marker query used to
+            silently parse to an incomplete :find spec instead of erroring
+            when interpreting the response's rows_edn shape"
+    (let [caps (mock-caps (atom [])
+                          (fn [_nsid _body]
+                            {:graph "k51testgraph" :basis_t nil :rows_edn [["1"]]}))
+          api  (kdb/kotoba-api caps)]
+      (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                            #"malformed query"
+                            ((:q api) '[:find :where [?e :checkpoint/thread ?tid]] test-conn))))))
+
 ;; ─── pull ────────────────────────────────────────────────────────────────────
 
 (deftest pull-lookup-ref
