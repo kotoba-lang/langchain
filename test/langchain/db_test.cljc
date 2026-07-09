@@ -139,6 +139,30 @@
                             #"malformed query"
                             (db/q '[:find :where [?e :person/name ?n]] dbv))))))
 
+#?(:clj
+   (deftest transact!-does-not-lose-writes-under-concurrent-contention
+     (testing "transact! used to precompute its tx report against a stale
+               `@conn` read, then install it unconditionally inside swap! --
+               swap!'s CAS-retry-on-conflict only reruns the SWAP FUNCTION,
+               and a function that unconditionally returns a precomputed
+               value is not actually retry-safe: the losing side of a race
+               would silently overwrite the winning side's :db-after with a
+               report computed from the pre-collision (stale) db, discarding
+               the winning caller's writes with no error at all. Reproduced
+               under real JVM thread contention (not a single-threaded
+               simulation) to make sure this isn't just a theoretical
+               concern -- N threads each transact! one uniquely-identified
+               datom onto a SHARED conn; every single one must land."
+       (let [n 50
+             conn (db/create-conn {:thread/id {:db/unique :db.unique/identity}})
+             threads (mapv (fn [i]
+                             (Thread. (fn [] (db/transact! conn [{:thread/id (str "t" i)}]))))
+                           (range n))]
+         (run! #(.start ^Thread %) threads)
+         (run! #(.join ^Thread %) threads)
+         (is (= n (count (:datoms (:db @conn))))
+             "every concurrent transact! must land -- none silently lost to the race")))))
+
 (deftest as-of-test
   (let [conn (db/create-conn schema)
         r1 (db/transact! conn [{:person/id "alice" :person/age 30}])
