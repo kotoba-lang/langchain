@@ -440,7 +440,11 @@
   Query may be the vector or map form."
   [query & inputs]
   (let [{:keys [find in where]} (parse-query query)
-        in (or in '[$])
+        ;; [(symbol "$")], not '[$]: nbb/SCI fails analysis on a quoted $
+        ;; literal inside an `or` expansion ("Unable to resolve symbol: $"),
+        ;; which made this whole namespace unloadable under nbb. A quoted $
+        ;; anywhere else (e.g. (= '$ s) below) analyzes fine.
+        in (or in [(symbol "$")])
         ;; pair :in specs with inputs; $ consumes the db
         [db frames]
         (loop [specs in, args inputs, db nil, frames [{}]]
