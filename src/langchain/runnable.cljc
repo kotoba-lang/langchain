@@ -31,21 +31,61 @@
   ([r inputs opts] (mapv #(-invoke r % opts) inputs)))
 
 ;; Plain functions and maps participate directly.
-(extend-protocol IRunnable
-  #?(:clj clojure.lang.Fn :cljs function)
-  (-invoke [f input _opts] (f input))
-  (-stream [f input opts] [(-invoke f input opts)])
+;;
+;; Three branches because nbb/SCI cannot analyze cljs concrete map types
+;; (cljs.core/PersistentArrayMap etc.) in extend-protocol, which made this
+;; whole namespace -- and langchain.model on top of it -- unloadable under
+;; nbb. The nbb branch extends Keyword plus :default with a manual
+;; map/function dispatch instead; a `function` extension would be wrong
+;; there because cljs maps are IFn and would dispatch to it. Record
+;; implementations (RSequence etc.) still take precedence over :default.
+;; Verified equivalent for the types the :clj/:cljs branches extend
+;; (fn, keyword, array-map, hash-map). The :org.babashka/nbb feature must
+;; stay listed before :cljs -- nbb sets both, first match wins.
+#?(:org.babashka/nbb
+   (extend-protocol IRunnable
+     cljs.core/Keyword
+     (-invoke [k input _opts] (get input k))
+     (-stream [k input opts] [(-invoke k input opts)])
+     :default
+     (-invoke [x input opts]
+       (if (map? x)
+         (reduce-kv (fn [out k r] (assoc out k (-invoke r input opts))) {} x)
+         (x input)))
+     (-stream [x input opts] [(-invoke x input opts)]))
 
-  #?(:clj clojure.lang.Keyword :cljs cljs.core/Keyword)
-  (-invoke [k input _opts] (get input k))
-  (-stream [k input opts] [(-invoke k input opts)])
+   :clj
+   (extend-protocol IRunnable
+     clojure.lang.Fn
+     (-invoke [f input _opts] (f input))
+     (-stream [f input opts] [(-invoke f input opts)])
 
-  #?(:clj clojure.lang.IPersistentMap :cljs cljs.core/PersistentArrayMap)
-  (-invoke [m input opts]
-    (reduce-kv (fn [out k r] (assoc out k (-invoke r input opts))) {} m))
-  (-stream [m input opts] [(-invoke m input opts)]))
+     clojure.lang.Keyword
+     (-invoke [k input _opts] (get input k))
+     (-stream [k input opts] [(-invoke k input opts)])
 
-#?(:cljs
+     clojure.lang.IPersistentMap
+     (-invoke [m input opts]
+       (reduce-kv (fn [out k r] (assoc out k (-invoke r input opts))) {} m))
+     (-stream [m input opts] [(-invoke m input opts)]))
+
+   :cljs
+   (extend-protocol IRunnable
+     function
+     (-invoke [f input _opts] (f input))
+     (-stream [f input opts] [(-invoke f input opts)])
+
+     cljs.core/Keyword
+     (-invoke [k input _opts] (get input k))
+     (-stream [k input opts] [(-invoke k input opts)])
+
+     cljs.core/PersistentArrayMap
+     (-invoke [m input opts]
+       (reduce-kv (fn [out k r] (assoc out k (-invoke r input opts))) {} m))
+     (-stream [m input opts] [(-invoke m input opts)])))
+
+#?(:org.babashka/nbb nil ;; maps covered by the :default extension above
+   :cljs
    (extend-protocol IRunnable
      cljs.core/PersistentHashMap
      (-invoke [m input opts]
