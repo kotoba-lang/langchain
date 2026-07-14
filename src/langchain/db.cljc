@@ -36,6 +36,8 @@
   (:require [clojure.string :as str]
             [clojure.set :as set]))
 
+(declare with)
+
 ;; ───────────────────────── db value & conn ─────────────────────────
 
 (defn empty-db
@@ -44,9 +46,33 @@
 
 (defn create-conn
   "Returns a connection (atom). The conn also keeps a tx log so `as-of`
-  can rebuild past db values."
+  can rebuild past db values.
+
+  PERSIST (optional, ADR-2607150000) is a duck-typed
+  `{:append (fn [event]) :read (fn [since] -> [events])}` map — the same
+  method shapes as `kotoba-lang/kotobase`'s `kotobase.store/IStore`
+  `-append`/`-read` (`langchain.db` does not `:require` that protocol
+  directly; keeping the persistence port duck-typed preserves the
+  zero-third-party-runtime-deps promise this namespace's own header
+  documents, ADR-0001 — same isolation `langchain.jvm` already uses for
+  its own optional host dependencies). When supplied, every event
+  previously appended (`((:read persist) 0)`) is replayed through `with`
+  to rebuild `:db` before the conn is returned, and `transact!` appends
+  each new tx to PERSIST going forward (see `transact!`)."
   ([] (create-conn {}))
-  ([schema] (atom {:db (empty-db schema) :log []})))
+  ([schema] (create-conn schema nil))
+  ([schema persist]
+   (let [base {:db (empty-db schema) :log []}
+         replayed (if persist
+                    (reduce (fn [state event]
+                              (let [r (with (:db state) (:tx-data event))]
+                                (-> state
+                                    (assoc :db (:db-after r))
+                                    (update :log conj {:tx (:tx r) :tx-data (:tx-data r)}))))
+                            base
+                            ((:read persist) 0))
+                    base)]
+     (atom (assoc replayed :persist persist)))))
 
 (defn db [conn] (:db @conn))
 
@@ -220,7 +246,25 @@
   writes with no error. Confirmed empirically: 50 concurrent JVM
   threads each transacting one datom onto a shared conn lost 28/50
   writes (56%) under the old code; 0 lost after this fix, verified
-  identically under real thread contention (not just reasoned about)."
+  identically under real thread contention (not just reasoned about).
+
+  ADR-2607150000: when `conn` was created with a `persist` map
+  (`create-conn`'s 2-arity form), the winning transaction is additionally
+  persisted via `((:append persist) {:tx .. :tx-data ..})` -- deliberately
+  AFTER `swap!` resolves, using `@report` (the winner, not whatever ran
+  inside the swap! fn body), so a CAS retry never double-persists the
+  same transaction the way it would if `-append` were called from inside
+  the swap! fn itself.
+
+  Known limitation, not yet fixed: under concurrent `transact!` calls on
+  the SAME conn, the in-memory `:log`'s tx order (assigned atomically
+  inside `swap!`) can differ from PERSIST's append order (each call's own
+  `-append` happens in a separate step after its own `swap!` returns, so
+  two callers' `-append` calls can interleave in a different order than
+  their `swap!`s actually won) -- replaying a persisted stream after a
+  restart could in rare high-concurrency cases rebuild `:db` in a
+  different tx order than the live process had. Not addressed here;
+  needs a dedicated ordering mechanism if it matters for a given caller."
   [conn tx-data]
   (let [report (volatile! nil)]
     (swap! conn (fn [state]
@@ -229,6 +273,8 @@
                     (-> state
                         (assoc :db (:db-after r))
                         (update :log conj {:tx (:tx r) :tx-data (:tx-data r)})))))
+    (when-let [persist (:persist @conn)]
+      ((:append persist) {:tx (:tx @report) :tx-data (:tx-data @report)}))
     @report))
 
 (defn as-of
