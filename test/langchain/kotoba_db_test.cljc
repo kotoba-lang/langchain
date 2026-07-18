@@ -58,6 +58,68 @@
     (testing "returns tx-report stub"
       (is (= tx-data (:tx-data result))))))
 
+(deftest transact-rotation-uploads-sealed-block-and-uses-guarded-xrpc
+  (let [captured (atom [])
+        uploaded (atom [])
+        caps (assoc
+              (mock-caps captured
+                         (fn [nsid _]
+                           (case nsid
+                             "ai.gftd.apps.kotobase.datomic.q"
+                             {:rows_edn [[(pr-str {:ledger/seq "0"
+                                                  :ledger/hash "head0"})]]}
+                             "ai.gftd.apps.kotobase.datomic.transactRotation"
+                             {:ok true :commit "chain1"})))
+              :sealed-block-put!
+              (fn [_conn cid bytes] (swap! uploaded conj [cid bytes])))
+        api (kdb/kotoba-api caps)
+        event {:rotation/id "r1" :rotation/subject "did:key:owner"
+               :rotation/purpose :authority :rotation/from-epoch 1}
+        result ((:transact-rotation! api)
+                (assoc test-conn :kotoba/rotation-cacao "signed-rotate-cacao")
+                {:block {:cid "b1" :bytes "ciphertext"}
+                 :item {:item/id "i1" :item/cid "b1"}
+                 :grants [{:grant/id "g1" :grant/item "i1"}]
+                 :rotation-event event}
+                (fn [ledger]
+                  (is (= 1 (count ledger)))
+                  {:ledger/seq 1 :ledger/prev-hash "head0"
+                   :ledger/hash "head1"}))]
+    (is (= [["b1" "ciphertext"]] @uploaded))
+    (is (= "chain1" (:commit result)))
+    (let [{:keys [nsid body]} (last @captured)
+          tx (edn/read-string (:tx_edn body))]
+      (is (= "ai.gftd.apps.kotobase.datomic.transactRotation" nsid))
+      (is (= 0 (:expected_ledger_seq body)))
+      (is (= "head0" (:expected_ledger_hash body)))
+      (is (= "r1" (:rotation_id body)))
+      (is (= #{"kagi:item:i1" "kagi:grant:g1"
+               "kagi:rotation:r1" "kagi:ledger:1"}
+             (set (map :db/id tx)))))))
+
+(deftest transact-rotation-fails-closed-without-sealed-block-store
+  (let [api (kdb/kotoba-api (mock-caps (atom []) (fn [_ _] {})))
+        conn (assoc test-conn :kotoba/rotation-cacao "signed-rotate-cacao")]
+    (is (thrown-with-msg?
+         #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+         #"sealed-block-put"
+         ((:transact-rotation! api) conn
+          {:block {:cid "b" :bytes "x"} :item {:item/id "i"}
+           :grants [] :rotation-event {:rotation/id "r"}}
+          (constantly {:ledger/seq 0}))))))
+
+(deftest protected-kagi-writes-require-dedicated-cacao
+  (let [api (kdb/kotoba-api (mock-caps (atom []) (fn [_ _] {})))]
+    (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                          #"dedicated Kagi CACAO"
+                          ((:transact-ledger! api) test-conn
+                           {:ledger/seq 0 :ledger/prev-hash nil :ledger/hash "h"})))
+    (is (thrown-with-msg? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                          #"dedicated Kagi CACAO"
+                          ((:transact-rotation! api) test-conn
+                           {:block {:cid "b" :bytes "x"}}
+                           identity)))))
+
 ;; ─── :db is identity ─────────────────────────────────────────────────────────
 
 (deftest db-returns-conn

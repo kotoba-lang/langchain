@@ -63,10 +63,12 @@
                     both `:db-name` (for writes) and `:graph` (for reads) for
                     a fully-functional tenant `conn` — see `kotoba-conn*`."
   ([url graph] (kotoba-conn url graph {}))
-  ([url graph {:keys [token cacao did db-name]}]
+  ([url graph {:keys [token cacao rotation-cacao ledger-cacao did db-name]}]
    (cond-> {:kotoba/url url :kotoba/graph graph}
      token   (assoc :kotoba/token token)
      cacao   (assoc :kotoba/cacao cacao :kotoba/did did)
+     rotation-cacao (assoc :kotoba/rotation-cacao rotation-cacao)
+     ledger-cacao (assoc :kotoba/ledger-cacao ledger-cacao)
      db-name (assoc :kotoba/db-name db-name))))
 
 (defn kotoba-conn*
@@ -159,6 +161,29 @@
     {:graph graph}
     {:db_name (:kotoba/db-name conn)}))
 
+(defn- wire-long
+  "Kotobase currently persists non-Link values as strings. Normalize a
+  ledger sequence before ordering or signing; lexical ordering would put
+  epoch 10 before epoch 2 and could sign the wrong head."
+  [x]
+  (let [n #?(:clj (try (Long/parseLong (str x))
+                       (catch Exception _ nil))
+             :cljs (let [v (js/Number (str x))]
+                     (when (js/Number.isSafeInteger v) v)))]
+    (when-not (and (number? n) (>= n 0))
+      (throw (ex-info "invalid ledger sequence from kotobase" {:value x})))
+    n))
+
+(defn- protected-cacao [conn kind]
+  (or (get conn (case kind
+                  :rotation :kotoba/rotation-cacao
+                  :ledger :kotoba/ledger-cacao))
+      (throw (ex-info "dedicated Kagi CACAO is required"
+                      {:kind kind
+                       :required-capability (case kind
+                                              :rotation "kagi:rotate"
+                                              :ledger "kagi:ledger")}))))
+
 (defn kotoba-api
   "Returns a langchain.db-compatible api map backed by kotoba-server XRPC.
 
@@ -181,6 +206,119 @@
               (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))
      ;; tx-report stub — checkpointer only needs side-effect, not tempids
      {:tx-data tx-data})
+
+   :sealed-block-get
+   (fn [conn cid]
+     (if-let [get-block! (:sealed-block-get host-caps)]
+       (get-block! conn cid)
+       (throw (ex-info "kotoba backend lacks sealed-block-get"
+                       {:required :sealed-block-get}))))
+
+   :sealed-block-put!
+   (fn [conn cid bytes]
+     (if-let [put-block! (:sealed-block-put! host-caps)]
+       (put-block! conn cid bytes)
+       (throw (ex-info "kotoba backend lacks sealed-block-put!"
+                       {:required :sealed-block-put!}))))
+
+   :transact-ledger!
+   (fn [conn entry]
+     (let [cacao (protected-cacao conn :ledger)
+           seq (:ledger/seq entry)
+           resp (post! host-caps conn "ai.gftd.apps.kotobase.datomic.transactLedger"
+                       (cond-> (merge (write-scope conn)
+                                      {:tx_edn (pr-str [(assoc entry :db/id
+                                                              (str "kagi:ledger:" seq))])
+                                       :expected_ledger_seq (dec seq)
+                                       :expected_ledger_hash (:ledger/prev-hash entry)})
+                         cacao (assoc :cacao_b64 cacao)))]
+       (if (:ok resp)
+         entry
+         (throw (ex-info "kotoba atomic ledger append rejected" resp)))))
+
+   :append-chained-ledger!
+   (fn [conn build-entry]
+     (let [cacao (protected-cacao conn :ledger)
+           query '[:find [(pull ?e [*]) ...] :where [?e :ledger/seq _]]
+           data (post! host-caps conn "ai.gftd.apps.kotobase.datomic.q"
+                       (cond-> (assoc (read-scope conn) :query_edn (pr-str query)
+                                      :inputs_edn [])
+                         (:kotoba/cacao conn)
+                         (assoc :cacao_b64 (:kotoba/cacao conn))))
+           ledger (->> (project-rows (:rows_edn data) (parse-find-spec query))
+                       (mapv #(update % :ledger/seq wire-long))
+                       (sort-by :ledger/seq) vec)
+           entry (build-entry ledger)
+           seq (:ledger/seq entry)
+           resp (post! host-caps conn "ai.gftd.apps.kotobase.datomic.transactLedger"
+                       (cond-> (merge (write-scope conn)
+                                      {:tx_edn (pr-str [(assoc entry :db/id
+                                                              (str "kagi:ledger:" seq))])
+                                       :expected_ledger_seq (if-let [p (last ledger)]
+                                                              (:ledger/seq p) -1)
+                                       :expected_ledger_hash (:ledger/hash (last ledger))})
+                         cacao (assoc :cacao_b64 cacao)))]
+       (if (:ok resp)
+         entry
+         (throw (ex-info "kotoba atomic chained ledger append rejected" resp)))))
+
+   :transact-rotation!
+   (fn [conn {:keys [block item grants rotation-event]} build-ledger]
+     ;; The sealed block is content-addressed and may safely be uploaded before
+     ;; the graph commit: until the item record becomes reachable it is only an
+     ;; orphan, and retrying the same CID is idempotent. Never publish metadata
+     ;; if the host has no durable sealed-block capability.
+     (let [rotation-cacao (protected-cacao conn :rotation)
+           put-block! (:sealed-block-put! host-caps)]
+       (when-not put-block!
+         (throw (ex-info "kotoba rotation requires durable sealed-block-put!"
+                         {:required :sealed-block-put!})))
+       (put-block! conn (:cid block) (:bytes block))
+       (let [query '[:find [(pull ?e [*]) ...] :where [?e :ledger/seq _]]
+             data (post! host-caps conn "ai.gftd.apps.kotobase.datomic.q"
+                         (cond-> (assoc (read-scope conn)
+                                        :query_edn (pr-str query)
+                                        :inputs_edn [])
+                           (:kotoba/cacao conn)
+                           (assoc :cacao_b64 (:kotoba/cacao conn))))
+             ledger (->> (project-rows (:rows_edn data) (parse-find-spec query))
+                         (mapv #(update % :ledger/seq wire-long))
+                         (sort-by :ledger/seq)
+                         vec)
+             previous (last ledger)
+             entry (build-ledger ledger)
+             rid (:rotation/id rotation-event)
+             tx-data (vec
+                      (concat
+                       [(assoc item :db/id (str "kagi:item:" (:item/id item)))]
+                       (map #(assoc % :db/id (str "kagi:grant:" (:grant/id %))) grants)
+                       [(assoc rotation-event :db/id (str "kagi:rotation:" rid))
+                        (assoc entry :db/id (str "kagi:ledger:" (:ledger/seq entry)))]))
+             resp (post! host-caps conn
+                         "ai.gftd.apps.kotobase.datomic.transactRotation"
+                         (cond-> (merge (write-scope conn)
+                                        {:tx_edn (pr-str tx-data)
+                                         :expected_ledger_seq (if previous
+                                                                (:ledger/seq previous) -1)
+                                         :expected_ledger_hash (:ledger/hash previous)
+                                         :rotation_id rid
+                                         :rotation_subject (str (:rotation/subject rotation-event))
+                                         ;; tx-edn->quads stores EDN keywords
+                                         ;; with their leading colon. JSON
+                                         ;; codecs commonly encode a keyword
+                                         ;; as its bare name, so normalize the
+                                         ;; guard explicitly to the stored form.
+                                         :rotation_purpose (str (:rotation/purpose rotation-event))
+                                         :rotation_from_epoch (:rotation/from-epoch rotation-event)})
+                           rotation-cacao (assoc :cacao_b64 rotation-cacao)))]
+         (cond
+           (:ok resp) {:ledger-entry entry :rotation-event rotation-event
+                       :item item :commit (:commit resp)}
+           (= "RotationAlreadyCommitted" (:error resp))
+           {:ledger-entry entry :rotation-event rotation-event :item item
+            :idempotent? true}
+           :else
+           (throw (ex-info "kotoba atomic rotation rejected" resp))))))
 
    ;; The conn map itself IS the db reference — all state lives on the server.
    ;; This matches the Datomic peer model: (d/db conn) returns a db value;
