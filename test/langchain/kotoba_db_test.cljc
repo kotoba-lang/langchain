@@ -117,6 +117,39 @@
     (testing "projects relation as set of tuples"
       (is (= #{[1 :a] [2 :b]} res)))))
 
+;; ─── q wire-shape normalization (2026-07-18) ────────────────────────────────
+;; The live kotobase.net edge's do-q treats a VECTOR-shaped query_edn as a
+;; single [s p o] triple-pattern query, not a multi-clause Datalog query --
+;; only a MAP-shaped query_edn ({:find [...] :where [...]}) routes to the
+;; real engine. Before this fix, :q always sent (pr-str query) verbatim --
+;; a vector-shaped find/where query (the form every existing in-process
+;; langchain.db/q caller already uses) silently matched nothing against
+;; the live edge (200 OK, empty rows, no error). Confirmed against
+;; kotobase.net directly, 2026-07-18: identical :find/:where query returns
+;; real rows as a map, empty as the original vector.
+
+(deftest q-sends-a-map-shaped-query-edn-even-when-called-with-a-vector-query
+  (let [captured (atom [])
+        caps     (mock-caps captured
+                            (fn [_nsid _body] {:graph "k51testgraph" :basis_t nil :rows_edn []}))
+        api      (kdb/kotoba-api caps)]
+    ((:q api) '[:find ?e ?a :where [?e ?a _]] test-conn)
+    (let [sent (edn/read-string (:query_edn (:body (first @captured))))]
+      (testing "wire query_edn is a map, not the original vector"
+        (is (map? sent)))
+      (testing "the map has the equivalent :find/:where"
+        (is (= '[?e ?a] (:find sent)))
+        (is (= '[[?e ?a _]] (:where sent)))))))
+
+(deftest q-passes-a-map-shaped-query-through-unchanged
+  (let [captured (atom [])
+        caps     (mock-caps captured
+                            (fn [_nsid _body] {:graph "k51testgraph" :basis_t nil :rows_edn []}))
+        api      (kdb/kotoba-api caps)]
+    ((:q api) '{:find [?e] :where [[?e :rep/name _]]} test-conn)
+    (let [sent (edn/read-string (:query_edn (:body (first @captured))))]
+      (is (= '{:find [?e] :where [[?e :rep/name _]]} sent)))))
+
 (deftest q-with-malformed-marker-sequence-throws-instead-of-silently-misparsing
   (testing "same hazard as langchain.db/parse-query (independently duplicated
             logic here, not shared code) -- an adjacent-marker query used to
@@ -132,43 +165,108 @@
 
 ;; ─── pull ────────────────────────────────────────────────────────────────────
 
+;; wire-format helper for the tests below: kotobase-server's [*] pull
+;; result is {"str-key" #{"pr-str-of-value"}} -- string keys (the printed
+;; form of a keyword, WITH quotes), set-wrapped values whose single
+;; element is itself that value's own pr-str. See normalize-wildcard-
+;; pull's docstring for why (confirmed against the live edge, 2026-07-18).
+(defn- wire-pull-result [m]
+  (pr-str (into {} (map (fn [[k v]] [(pr-str k) #{(pr-str v)}])) m)))
+
 (deftest pull-lookup-ref
-  (let [captured  (atom [])
-        entity-edn (pr-str {:checkpoint/key "t1/5"
-                            :checkpoint/thread "t1"
-                            :checkpoint/step 5
-                            :checkpoint/state "{}"
-                            :checkpoint/frontier "[]"
-                            :checkpoint/status :running})
-        caps      (mock-caps captured
-                             (fn [_nsid _body]
-                               {:graph "k51testgraph" :basis_t nil
-                                :entity "t1/5"
-                                :entity_edn entity-edn
-                                :datom_count 5 :datoms []}))
-        api    (kdb/kotoba-api caps)
-        result ((:pull api) test-conn '[*] [:checkpoint/key "t1/5"])]
-    (testing "posts to datomic.pull"
-      (is (= "ai.gftd.apps.kotobase.datomic.pull" (:nsid (first @captured)))))
-    (testing "sends entity as EDN pr-str of lookup ref"
-      (is (= "[:checkpoint/key \"t1/5\"]"
-             (:entity (:body (first @captured))))))
-    (testing "parses entity_edn to Clojure map"
-      (is (= 5 (:checkpoint/step result)))
-      (is (= "t1" (:checkpoint/thread result))))))
+  (testing "response field is :result_edn, NOT :entity_edn; and only a
+           `[*]` pattern_edn is actually honored server-side (a
+           caller's own, possibly-narrower `pattern` is applied
+           CLIENT-side via select-keys, not sent over the wire) -- see
+           kotoba_db.cljc's :pull docstring for the full explanation."
+    (let [captured  (atom [])
+          wire-result (wire-pull-result {:checkpoint/key "t1/5"
+                                         :checkpoint/thread "t1"
+                                         :checkpoint/step 5
+                                         :checkpoint/status :running})
+          caps      (mock-caps captured
+                               (fn [_nsid _body]
+                                 {:graph "k51testgraph" :basis_t nil
+                                  :entity "t1/5"
+                                  :result_edn wire-result}))
+          api    (kdb/kotoba-api caps)
+          result ((:pull api) test-conn '[*] [:checkpoint/key "t1/5"])]
+      (testing "posts to datomic.pull"
+        (is (= "ai.gftd.apps.kotobase.datomic.pull" (:nsid (first @captured)))))
+      (testing "sends entity as the lookup ref's bare VALUE half, not an
+               EDN-encoded string of the whole ref -- see entity-wire-
+               value's docstring for why"
+        (is (= "t1/5" (:entity (:body (first @captured))))))
+      (testing "always requests [*] over the wire, even though the
+               caller's own pattern here already IS [*]"
+        (is (= "[*]" (:pattern_edn (:body (first @captured))))))
+      (testing "un-wraps the string-key/set-value wire format to a plain map"
+        (is (= 5 (:checkpoint/step result)))
+        (is (= "t1" (:checkpoint/thread result)))
+        (is (= :running (:checkpoint/status result)))))))
+
+(deftest pull-plain-eid-coerced-to-string
+  (let [captured (atom [])
+        caps     (mock-caps captured
+                            (fn [_nsid _body] {:graph "k51testgraph" :basis_t nil :result_edn "{}"}))
+        api      (kdb/kotoba-api caps)]
+    ((:pull api) test-conn '[*] "debug-rep-1")
+    (is (= "debug-rep-1" (:entity (:body (first @captured)))))))
+
+(deftest pull-lookup-ref-backfills-the-identity-attribute-when-absent-from-the-wire-result
+  (testing "this substrate has no separate storage for the identity attr
+           itself -- its value literally IS the entity id, so a wildcard
+           pull never returns it as its own key (confirmed against the
+           live edge, 2026-07-18: a rep transacted with :rep/id came back
+           from [*] with :rep/name present but no :rep/id key at all).
+           Without backfilling it from the lookup ref, every entity
+           looked up this way would be indistinguishable from
+           non-existent to a caller (like crm.store's pull->rep) that
+           gates on the id field's presence."
+    (let [wire-result (wire-pull-result {:rep/name "Acme" :rep/discount-tier :tier/rep})
+          caps     (mock-caps (atom [])
+                              (fn [_nsid _body]
+                                {:graph "k51testgraph" :basis_t nil :result_edn wire-result}))
+          api      (kdb/kotoba-api caps)
+          result   ((:pull api) test-conn '[*] [:rep/id "acct-1"])]
+      (is (= "acct-1" (:rep/id result)))
+      (is (= "Acme" (:rep/name result))))))
+
+(deftest pull-with-a-narrower-pattern-still-requests-wildcard-and-filters-client-side
+  (testing "a pattern_edn naming specific attributes (e.g. [:rep/name])
+           silently returned {} against the live edge every time, while
+           [*] alone returned real attrs for the same entity (confirmed
+           2026-07-18) -- so this fn ALWAYS sends [*] and filters the
+           caller's narrower pattern in after the fact"
+    (let [captured (atom [])
+          wire-result (wire-pull-result {:rep/name "Acme" :rep/discount-tier :tier/rep})
+          caps     (mock-caps captured
+                              (fn [_nsid _body]
+                                {:graph "k51testgraph" :basis_t nil :result_edn wire-result}))
+          api      (kdb/kotoba-api caps)
+          result   ((:pull api) test-conn [:rep/name] "acct-1")]
+      (testing "still requests [*] over the wire despite the narrower pattern"
+        (is (= "[*]" (:pattern_edn (:body (first @captured))))))
+      (testing "only the requested attribute is present in the result"
+        (is (= {:rep/name "Acme"} result))))))
 
 ;; ─── entid ───────────────────────────────────────────────────────────────────
 
 (deftest entid-lookup
-  (let [caps   (mock-caps (atom [])
-                          (fn [_nsid _body]
-                            {:graph "k51testgraph"
-                             :ident_edn ":checkpoint/key"
-                             :basis_t nil
-                             :entity "bafyeid123"}))
-        api    (kdb/kotoba-api caps)
-        result ((:entid api) test-conn :checkpoint/key)]
-    (is (= "bafyeid123" result))))
+  (testing "response field is :entity_id, NOT :entity -- kotobase.server.
+           handler/do-entid returns {:ok true :graph ... :entity_id ...};
+           :entity is a different NSID's field name. A mock/expectation
+           using :entity here would silently pass while the live edge
+           returns nil for every real :entid call (confirmed by code
+           inspection, 2026-07-18)."
+    (let [caps   (mock-caps (atom [])
+                            (fn [_nsid _body]
+                              {:graph "k51testgraph"
+                               :basis_t nil
+                               :entity_id "bafyeid123"}))
+          api    (kdb/kotoba-api caps)
+          result ((:entid api) test-conn :checkpoint/key)]
+      (is (= "bafyeid123" result)))))
 
 ;; ─── error propagation ───────────────────────────────────────────────────────
 
