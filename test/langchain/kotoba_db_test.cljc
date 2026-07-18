@@ -166,12 +166,15 @@
 ;; ─── pull ────────────────────────────────────────────────────────────────────
 
 ;; wire-format helper for the tests below: kotobase-server's [*] pull
-;; result is {"str-key" #{"pr-str-of-value"}} -- string keys (the printed
-;; form of a keyword, WITH quotes), set-wrapped values whose single
-;; element is itself that value's own pr-str. See normalize-wildcard-
-;; pull's docstring for why (confirmed against the live edge, 2026-07-18).
+;; result is {"str-key" #{"v"}} -- string keys (the printed form of a
+;; keyword, WITH quotes), set-wrapped values whose single element is
+;; that value's OWN pr-str for every type EXCEPT string (a string
+;; attribute's value comes back RAW/unquoted -- see decode-pull-value's
+;; docstring for why: confirmed against the live edge, 2026-07-18, a
+;; value with a space silently truncated when treated as pr-str like
+;; every other type is).
 (defn- wire-pull-result [m]
-  (pr-str (into {} (map (fn [[k v]] [(pr-str k) #{(pr-str v)}])) m)))
+  (pr-str (into {} (map (fn [[k v]] [(pr-str k) #{(if (string? v) v (pr-str v))}])) m)))
 
 (deftest pull-lookup-ref
   (testing "response field is :result_edn, NOT :entity_edn; and only a
@@ -231,6 +234,25 @@
           result   ((:pull api) test-conn '[*] [:rep/id "acct-1"])]
       (is (= "acct-1" (:rep/id result)))
       (is (= "Acme" (:rep/name result))))))
+
+(deftest pull-decodes-a-multi-word-string-value-without-truncating-it
+  (testing "a string attribute's value comes back RAW on this wire (not
+           pr-str'd/quoted like every other type) -- blindly edn/read-
+           string-ing a multi-word value silently truncates to its first
+           reader token (confirmed against the live edge, 2026-07-18: a
+           value with a space came back as just its first word, e.g. a
+           name of '6399 Managed Job Board (aggregate free-tenant pool)'
+           read back as just the symbol `6399`). decode-pull-value must
+           preserve the full string."
+    (let [wire-result (wire-pull-result {:account/name "6399 Managed Job Board (aggregate free-tenant pool)"
+                                         :account/active true})
+          caps (mock-caps (atom [])
+                          (fn [_nsid _body]
+                            {:graph "k51testgraph" :basis_t nil :result_edn wire-result}))
+          api  (kdb/kotoba-api caps)
+          result ((:pull api) test-conn '[*] "acct-6399")]
+      (is (= "6399 Managed Job Board (aggregate free-tenant pool)" (:account/name result)))
+      (is (= true (:account/active result))))))
 
 (deftest pull-with-a-narrower-pattern-still-requests-wildcard-and-filters-client-side
   (testing "a pattern_edn naming specific attributes (e.g. [:rep/name])
