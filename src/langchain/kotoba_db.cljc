@@ -106,19 +106,35 @@
 
 ;; ─── query projection ─────────────────────────────────────────────────────────
 
+(defn- normalize-query
+  "A vector-shaped Datomic query (`[:find ... :where ...]`, the form every
+  existing caller of this ns's `:q` sends — same as `langchain.db/q`)
+  parses to a MAP (`{:find [...] :where [...]}`) before going over the
+  wire, since the live edge's `datomic.q` handler (`kotobase.server.
+  handler/do-q`) interprets a *vector*-shaped `query_edn` as a single
+  `[s p o]` triple-pattern query, not a multi-clause Datalog query — so a
+  vector-shaped find/where query silently matched nothing (200 OK, empty
+  rows, no error) rather than running the query the caller actually meant.
+  Confirmed against the live kotobase.net edge, 2026-07-18: the exact same
+  `:find`/`:where` query returns real rows when sent as a map and an empty
+  set when sent as the original vector. A query already given as a map
+  passes through unchanged (both `langchain.db/q` and kotoba-server's
+  `do-q` already accept a map query natively)."
+  [query]
+  (if (map? query)
+    query
+    (let [groups (partition-by #{:find :in :where :with} query)]
+      ;; same malformed-query hazard as langchain.db/parse-query
+      ;; (independently duplicated logic, not shared code) -- see
+      ;; that fn's docstring for the full odd-group-count/silent-
+      ;; drop rationale.
+      (when (odd? (count groups))
+        (throw (ex-info "langchain.kotoba-db: malformed query -- a :find/:in/:where/:with marker must be followed by at least one value before the next marker (or end of query)"
+                        {:query query})))
+      (reduce (fn [m [[k] v]] (assoc m k (vec v))) {} (partition 2 groups)))))
+
 (defn- parse-find-spec [query]
-  (let [q (if (map? query)
-             query
-             (let [groups (partition-by #{:find :in :where :with} query)]
-               ;; same malformed-query hazard as langchain.db/parse-query
-               ;; (independently duplicated logic, not shared code) -- see
-               ;; that fn's docstring for the full odd-group-count/silent-
-               ;; drop rationale.
-               (when (odd? (count groups))
-                 (throw (ex-info "langchain.kotoba-db: malformed query -- a :find/:in/:where/:with marker must be followed by at least one value before the next marker (or end of query)"
-                                 {:query query})))
-               (reduce (fn [m [[k] v]] (assoc m k (vec v))) {} (partition 2 groups))))]
-    (:find q)))
+  (:find (normalize-query query)))
 
 (defn- project-rows
   "Maps kotoba rows_edn (Vec<Vec<edn-string>>) to the same result shape
@@ -133,6 +149,54 @@
       scalar? (ffirst rows)
       coll?   (vec (distinct (map first rows)))
       :else   (set rows))))
+
+(defn- entity-wire-value
+  "eid -> the plain string kotobase-server's `do-pull` actually expects for
+  `:entity` (body: {:graph :entity :pattern_edn}, handler.cljc's own
+  docstring: 'body: {:graph :entity :pattern_edn}' — `entity` is used
+  as-is, NEVER `edn/read-string`'d server-side, unlike `:pull`'s sibling
+  `:entid`/`:q`, whose EDN-string fields (`ident_edn`/`query_edn`) ARE
+  parsed there). Sending `(pr-str eid)` here — the natural-looking choice,
+  since every other field on this wire IS an EDN string — silently pulled
+  an empty entity against the live edge (confirmed 2026-07-18: `:entity
+  \"\\\"debug-rep-1\\\"\"` → `{}`; `:entity \"debug-rep-1\"` → real attrs).
+
+  A Datomic-style 2-tuple lookup ref (`[attr value]`, what `crm.store` and
+  every other in-process `langchain.db/pull` caller already pass as `eid`)
+  has `value` extracted and sent alone — this substrate has exactly one
+  identity space per graph (whichever attribute a caller's schema marks
+  `:db.unique/identity`, its VALUE is the entity id string directly; see
+  `kotobase.server.handler`'s `hot-datoms`/`entid` for why there is no
+  per-attribute identity resolution the way real Datomic's `entid` needs),
+  so the ref's attr half carries no additional information the edge can
+  use. A non-tuple eid (already a plain id) is coerced to a string as-is."
+  [eid]
+  (if (and (vector? eid) (= 2 (count eid)))
+    (str (second eid))
+    (str eid)))
+
+(defn- normalize-wildcard-pull
+  "The result of a `[*]` pull against the live edge, one `edn/read-string`
+  in (see `:pull`'s caller — `result-map` is already `{\":attr\" #{\"v-
+  edn\"}}`, e.g. `{\":rep/name\" #{\"\\\"Acme\\\"\"} \":rep/discount-tier\"
+  #{\":tier/rep\"}}`), normalized to a plain Clojure map (`{:rep/name
+  \"Acme\" :rep/discount-tier :tier/rep}`): each string key is itself
+  further `edn/read-string`'d to a keyword, and — since this substrate
+  wraps EVERY attribute's value in a set regardless of Datomic
+  cardinality (confirmed against the live edge, 2026-07-18: a plain
+  cardinality-one string attribute came back set-wrapped identically to
+  how a cardinality-many attribute would) and this ns's callers
+  (`crm.store` et al.) only ever use cardinality-one schemas — the single
+  set element is taken and ITself `edn/read-string`'d again (each element
+  is its own value's pr-str, the same double-encoding `do-pull`'s no-
+  pattern legacy `:attrs` shape and `project-rows`'s `rows_edn` cells
+  already use elsewhere on this wire)."
+  [result-map]
+  (into {}
+        (map (fn [[k vs]]
+               [(cond-> k (string? k) edn/read-string)
+                (edn/read-string (first vs))]))
+        result-map))
 
 ;; ─── api map ─────────────────────────────────────────────────────────────────
 
@@ -191,7 +255,11 @@
    (fn [query conn & inputs]
      (let [data (post! host-caps conn "ai.gftd.apps.kotobase.datomic.q"
                        (cond-> (assoc (read-scope conn)
-                                      :query_edn  (pr-str query)
+                                      ;; normalize-query: the edge's do-q treats a
+                                      ;; vector query_edn as a single [s p o]
+                                      ;; triple-pattern, not a multi-clause
+                                      ;; find/where query -- see that fn's docstring.
+                                      :query_edn  (pr-str (normalize-query query))
                                       ;; inputs_edn: non-$ bindings ($ is already the graph)
                                       :inputs_edn (mapv pr-str inputs))
                          (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))]
@@ -199,19 +267,66 @@
 
    :pull
    (fn [conn pattern eid]
+     ;; ALWAYS requests [*], regardless of the caller's own `pattern` --
+     ;; confirmed against the live edge, 2026-07-18: a `pattern_edn` naming
+     ;; specific attributes (e.g. `[:rep/name]`, the natural-looking way to
+     ;; ask for less than everything) silently returned `{}` every time,
+     ;; while `[*]` alone returned real attrs for the exact same entity.
+     ;; This is a live server-side limitation (kotobase-peer's `pull`
+     ;; pattern-matching against a non-wildcard attr list), not something
+     ;; fixable purely at this wire layer -- the workaround is to always
+     ;; pull everything and filter client-side (see `select-keys` below),
+     ;; which only supports FLAT attribute-list patterns like this ns's
+     ;; own callers (`crm.store` et al.) use -- a nested pull pattern
+     ;; (`{attr [sub-pattern]}`) is NOT reproduced by this workaround.
      (let [data (post! host-caps conn "ai.gftd.apps.kotobase.datomic.pull"
                        (cond-> (assoc (read-scope conn)
-                                      :entity      (pr-str eid)
-                                      :pattern_edn (pr-str pattern))
-                         (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))]
-       ;; entity_edn is an EDN string of the Datomic entity map
-       (edn/read-string (:entity_edn data))))
+                                      ;; entity-wire-value, NOT (pr-str eid) --
+                                      ;; see that fn's docstring.
+                                      :entity      (entity-wire-value eid)
+                                      :pattern_edn (pr-str '[*]))
+                         (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))
+           ;; result_edn (NOT entity_edn -- kotobase.server.handler/do-pull's
+           ;; pattern_edn branch, which this fn always takes since :pattern_edn
+           ;; is unconditionally sent above, wire-encodes the whole pull result
+           ;; as :result_edn; do-pull's OTHER branch (no pattern_edn, a legacy
+           ;; flat-attrs shape this fn never triggers) returns :attrs instead --
+           ;; neither branch of the live edge ever returns a field literally
+           ;; named entity_edn. That name only exists on the UNRELATED
+           ;; datomic.entity NSID (do-entity), which this :pull fn doesn't
+           ;; call. Reading a field that's never present silently produced nil
+           ;; for every :pull call against the live edge -- confirmed directly,
+           ;; 2026-07-18.
+           full (normalize-wildcard-pull (edn/read-string (:result_edn data)))
+           ;; This substrate has no separate storage for the identity
+           ;; attribute itself -- its VALUE literally IS the entity id
+           ;; (confirmed 2026-07-18: a rep transacted as {:rep/id "x"
+           ;; :rep/name "y"} came back from a wildcard pull with :rep/name
+           ;; present but NO :rep/id key at all), so it never appears as
+           ;; its own key in the pull result. When `eid` was a `[attr
+           ;; value]` lookup ref, re-add `{attr value}` so a caller that
+           ;; pulls an identity attribute back out (e.g. `crm.store`'s
+           ;; `pull->rep`/`pull->account`/etc., every one of which gates
+           ;; on that id field being present in the pulled map) sees it —
+           ;; without this, EVERY entity looked up by lookup ref pulled
+           ;; back as a map indistinguishable from "entity does not
+           ;; exist" to those callers.
+           full (if (and (vector? eid) (= 2 (count eid)))
+                  (assoc full (first eid) (second eid))
+                  full)]
+       (if (= pattern '[*]) full (select-keys full pattern))))
 
    :entid
    (fn [conn eid]
-     (:entity (post! host-caps conn "ai.gftd.apps.kotobase.datomic.entid"
-                     (cond-> (assoc (read-scope conn) :ident_edn (pr-str eid))
-                       (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))))})
+     ;; entity_id (NOT entity -- kotobase.server.handler/do-entid's
+     ;; response field is :entity_id; :entity is a DIFFERENT NSID's
+     ;; (datomic.pull/datomic.ident) request/response field name. Reading
+     ;; the wrong one silently produced nil for every :entid call against
+     ;; the live edge -- confirmed by code inspection, 2026-07-18 (see
+     ;; handler.cljc's do-entid: `{:ok true :graph graph :entity_id ...}`).
+     (:entity_id (post! host-caps conn "ai.gftd.apps.kotobase.datomic.entid"
+                        (cond-> (assoc (read-scope conn) :ident_edn (pr-str eid))
+                          (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))))})
 
 ;; ─── kg.ingest surface ────────────────────────────────────────────────────────
 
