@@ -175,11 +175,53 @@
     (str (second eid))
     (str eid)))
 
+(defn- decode-pull-value
+  "A single `[*]` pull set-element, round-trip-safely decoded. Every
+  non-string attribute type (keyword, boolean, number) on this wire IS
+  its own pr-str (`:tier/rep`, `\"true\"`, `\"5\"` all `edn/read-string`
+  back to the real value cleanly) -- but a STRING attribute's value comes
+  back RAW, not pr-str'd/quoted (`\"6399 Managed Job Board (aggregate
+  free-tenant pool)\"`, not `\"\\\"6399 ...\\\"\"`). Blindly
+  `edn/read-string`-ing a raw multi-token string silently truncates to
+  its first reader token (confirmed against the live edge, 2026-07-18:
+  a value with a space came back as just its first word) -- Clojure's
+  reader has no obligation to consume the whole string and doesn't error
+  on leftover input via `read-string`.
+
+  Two guards, in order: (1) a parse that comes back as a SYMBOL is always
+  rejected -- this substrate's schema never legitimately stores a bare
+  symbol as an attribute value, so a symbol result means `v` was actually
+  a single-word raw string (`\"t1\"` parses to the symbol `t1`, and
+  `(pr-str 't1)` is ALSO `\"t1\"`, so the round-trip check below alone
+  cannot tell a genuine 1-word string apart from an accidental symbol
+  parse -- confirmed directly: this exact false-positive broke 3 existing
+  tests, e.g. a mocked `:checkpoint/thread \"t1\"` before this guard was
+  added). (2) otherwise, only trust the parse when re-printing it
+  recovers the EXACT original wire string (catches multi-token strings
+  like the space-containing example above); anything else falls back to
+  the raw string as-is.
+
+  Restored 2026-07-24 after the `kotoba-api-async` addition briefly
+  replaced this fn's call site with a bare unconditional `edn/read-
+  string`, silently reintroducing the exact multi-word-string-truncation
+  regression this fn was written to fix -- see `normalize-wildcard-pull`,
+  the ONLY caller, shared by both `kotoba-api`'s and `kotoba-api-async`'s
+  `:pull`, so both stay fixed together and cannot re-diverge silently."
+  [v]
+  (let [parsed (try (edn/read-string v)
+                     (catch #?(:clj Exception :cljs :default) _ ::unparseable))]
+    (if (and (not= parsed ::unparseable)
+             (not (symbol? parsed))
+             (= v (pr-str parsed)))
+      parsed
+      v)))
+
 (defn- normalize-wildcard-pull
   "The result of a `[*]` pull against the live edge, one `edn/read-string`
-  in (see `:pull`'s caller — `result-map` is already `{\":attr\" #{\"v-
-  edn\"}}`, e.g. `{\":rep/name\" #{\"\\\"Acme\\\"\"} \":rep/discount-tier\"
-  #{\":tier/rep\"}}`), normalized to a plain Clojure map (`{:rep/name
+  in (see `:pull`'s caller — `result-map` is already `{\":attr\" #{\"v\"}}`,
+  e.g. `{\":rep/name\" #{\"Acme\"} \":rep/discount-tier\" #{\":tier/rep\"}}`
+  — note :rep/name's element is the RAW string, not pr-str'd; see
+  `decode-pull-value`), normalized to a plain Clojure map (`{:rep/name
   \"Acme\" :rep/discount-tier :tier/rep}`): each string key is itself
   further `edn/read-string`'d to a keyword, and — since this substrate
   wraps EVERY attribute's value in a set regardless of Datomic
@@ -187,15 +229,14 @@
   cardinality-one string attribute came back set-wrapped identically to
   how a cardinality-many attribute would) and this ns's callers
   (`crm.store` et al.) only ever use cardinality-one schemas — the single
-  set element is taken and ITself `edn/read-string`'d again (each element
-  is its own value's pr-str, the same double-encoding `do-pull`'s no-
-  pattern legacy `:attrs` shape and `project-rows`'s `rows_edn` cells
-  already use elsewhere on this wire)."
+  set element is taken and decoded via `decode-pull-value`. Shared by
+  both `kotoba-api` and `kotoba-api-async`'s `:pull` (see that fn's own
+  docstring)."
   [result-map]
   (into {}
         (map (fn [[k vs]]
                [(cond-> k (string? k) edn/read-string)
-                (edn/read-string (first vs))]))
+                (decode-pull-value (first vs))]))
         result-map))
 
 ;; ─── api map ─────────────────────────────────────────────────────────────────
