@@ -140,7 +140,12 @@
   "Maps kotoba rows_edn (Vec<Vec<edn-string>>) to the same result shape
   as langchain.db/q: scalar value, collection vector, or set of tuples."
   [rows-edn find-spec]
-  (let [rows    (mapv (fn [row] (mapv edn/read-string row)) rows-edn)
+  (let [decode-cell (fn [cell]
+                      ;; clj-edge's `rows` keeps JSON numbers/booleans native
+                      ;; while encoding keywords and strings as EDN strings.
+                      ;; Direct-backend `rows_edn` encodes every cell.
+                      (if (string? cell) (edn/read-string cell) cell))
+        rows    (mapv (fn [row] (mapv decode-cell row)) rows-edn)
         scalar? (= '. (last find-spec))
         coll?   (and (= 1 (count find-spec))
                      (vector? (first find-spec))
@@ -263,7 +268,12 @@
                                       ;; inputs_edn: non-$ bindings ($ is already the graph)
                                       :inputs_edn (mapv pr-str inputs))
                          (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))]
-       (project-rows (:rows_edn data) (parse-find-spec query))))
+       ;; Current hosted clj-edge returns the same Vec<Vec<EDN string>>
+       ;; payload under `rows`; older pods and the direct backend use
+       ;; `rows_edn`. Accept both wire spellings so a successful hosted query
+       ;; is not silently projected as an empty result.
+       (project-rows (or (:rows_edn data) (:rows data))
+                     (parse-find-spec query))))
 
    :pull
    (fn [conn pattern eid]
@@ -417,7 +427,8 @@
                                          :query_edn  (pr-str (normalize-query query))
                                          :inputs_edn (mapv pr-str inputs))
                             (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))
-             (fn [data] (project-rows (:rows_edn data) (parse-find-spec query)))))
+             (fn [data] (project-rows (or (:rows_edn data) (:rows data))
+                                      (parse-find-spec query)))))
 
    :pull
    (fn [conn pattern eid]

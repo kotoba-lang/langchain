@@ -117,6 +117,27 @@
     (testing "projects relation as set of tuples"
       (is (= #{[1 :a] [2 :b]} res)))))
 
+(deftest q-accepts-hosted-rows-key
+  (testing "production clj-edge uses rows while the direct backend uses rows_edn"
+    (let [caps (mock-caps (atom [])
+                          (fn [_nsid _body]
+                            {:graph "bafyhosted"
+                             :rows [[":team-pro"]
+                                    [":developer-standard"]
+                                    [":regulated"]]}))
+          api (kdb/kotoba-api caps)]
+      (is (= #{[:team-pro] [:developer-standard] [:regulated]}
+             ((:q api) '[:find ?tier :where [?e :dogfood/tier ?tier]]
+              test-conn)))))
+  (testing "hosted aggregation cells may already be native JSON numbers"
+    (let [caps (mock-caps (atom [])
+                          (fn [_nsid _body] {:rows [[10]]}))
+          api (kdb/kotoba-api caps)]
+      (is (= 10
+             ((:q api) '[:find (count ?e) .
+                         :where [?e :dogfood/kind :customer-activation]]
+              test-conn))))))
+
 ;; ─── q wire-shape normalization (2026-07-18) ────────────────────────────────
 ;; The live kotobase.net edge's do-q treats a VECTOR-shaped query_edn as a
 ;; single [s p o] triple-pattern query, not a multi-clause Datalog query --
