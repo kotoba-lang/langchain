@@ -175,46 +175,11 @@
     (str (second eid))
     (str eid)))
 
-(defn- decode-pull-value
-  "A single `[*]` pull set-element, round-trip-safely decoded. Every
-  non-string attribute type (keyword, boolean, number) on this wire IS
-  its own pr-str (`:tier/rep`, `\"true\"`, `\"5\"` all `edn/read-string`
-  back to the real value cleanly) -- but a STRING attribute's value comes
-  back RAW, not pr-str'd/quoted (`\"6399 Managed Job Board (aggregate
-  free-tenant pool)\"`, not `\"\\\"6399 ...\\\"\"`). Blindly
-  `edn/read-string`-ing a raw multi-token string silently truncates to
-  its first reader token (confirmed against the live edge, 2026-07-18:
-  a value with a space came back as just its first word) -- Clojure's
-  reader has no obligation to consume the whole string and doesn't error
-  on leftover input via `read-string`.
-
-  Two guards, in order: (1) a parse that comes back as a SYMBOL is always
-  rejected -- this substrate's schema never legitimately stores a bare
-  symbol as an attribute value, so a symbol result means `v` was actually
-  a single-word raw string (`\"t1\"` parses to the symbol `t1`, and
-  `(pr-str 't1)` is ALSO `\"t1\"`, so the round-trip check below alone
-  cannot tell a genuine 1-word string apart from an accidental symbol
-  parse -- confirmed directly: this exact false-positive broke 3 existing
-  tests, e.g. a mocked `:checkpoint/thread \"t1\"` before this guard was
-  added). (2) otherwise, only trust the parse when re-printing it
-  recovers the EXACT original wire string (catches multi-token strings
-  like the space-containing example above); anything else falls back to
-  the raw string as-is."
-  [v]
-  (let [parsed (try (edn/read-string v)
-                     (catch #?(:clj Exception :cljs :default) _ ::unparseable))]
-    (if (and (not= parsed ::unparseable)
-             (not (symbol? parsed))
-             (= v (pr-str parsed)))
-      parsed
-      v)))
-
 (defn- normalize-wildcard-pull
   "The result of a `[*]` pull against the live edge, one `edn/read-string`
-  in (see `:pull`'s caller — `result-map` is already `{\":attr\" #{\"v\"}}`,
-  e.g. `{\":rep/name\" #{\"Acme\"} \":rep/discount-tier\" #{\":tier/rep\"}}`
-  — note :rep/name's element is the RAW string, not pr-str'd; see
-  `decode-pull-value`), normalized to a plain Clojure map (`{:rep/name
+  in (see `:pull`'s caller — `result-map` is already `{\":attr\" #{\"v-
+  edn\"}}`, e.g. `{\":rep/name\" #{\"\\\"Acme\\\"\"} \":rep/discount-tier\"
+  #{\":tier/rep\"}}`), normalized to a plain Clojure map (`{:rep/name
   \"Acme\" :rep/discount-tier :tier/rep}`): each string key is itself
   further `edn/read-string`'d to a keyword, and — since this substrate
   wraps EVERY attribute's value in a set regardless of Datomic
@@ -222,12 +187,15 @@
   cardinality-one string attribute came back set-wrapped identically to
   how a cardinality-many attribute would) and this ns's callers
   (`crm.store` et al.) only ever use cardinality-one schemas — the single
-  set element is taken and decoded via `decode-pull-value`."
+  set element is taken and ITself `edn/read-string`'d again (each element
+  is its own value's pr-str, the same double-encoding `do-pull`'s no-
+  pattern legacy `:attrs` shape and `project-rows`'s `rows_edn` cells
+  already use elsewhere on this wire)."
   [result-map]
   (into {}
         (map (fn [[k vs]]
                [(cond-> k (string? k) edn/read-string)
-                (decode-pull-value (first vs))]))
+                (edn/read-string (first vs))]))
         result-map))
 
 ;; ─── api map ─────────────────────────────────────────────────────────────────
@@ -359,6 +327,118 @@
      (:entity_id (post! host-caps conn "ai.gftd.apps.kotobase.datomic.entid"
                         (cond-> (assoc (read-scope conn) :ident_edn (pr-str eid))
                           (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))))})
+
+;; ─── portable promise-like seam (for kotoba-api-async) ────────────────────────
+
+(defn- p-resolved
+  "v -> a promise-like of v: a real `js/Promise` under `:cljs`, the plain
+  value itself under `:clj`. Kept private and local to this ns (langchain
+  has zero third-party runtime deps, ADR-0001) rather than reusing any
+  app's own `pcompat`/similar ns -- this is the SAME documented duality
+  every kotobase-backed edge caller already relies on one layer up (e.g.
+  `commitledger.edge.pcompat`/`credit.edge.pcompat`'s `resolved`), just
+  needed here too since `kotoba-api-async`'s own :db op has no I/O to
+  perform and must still return a promise-like."
+  [v]
+  #?(:cljs (js/Promise.resolve v)
+     :clj  v))
+
+(defn- p-then
+  "p is a promise-like (see `p-resolved`) -- `:cljs` chains a real
+  `js/Promise` via `.then`; `:clj` calls `f` on `p` directly (JVM callers
+  of `kotoba-api-async` pass a synchronous-under-the-hood mock
+  `:http-fn`, so there is no event loop to chain against, matching every
+  app-level `pcompat/then`'s own `:clj` branch)."
+  [p f]
+  #?(:cljs (.then p f)
+     :clj  (f p)))
+
+(defn- post!-async
+  "Like `post!`, but `http-fn` is ASYNC (returns a promise-like of
+  `{:status :body}` instead of the plain map itself) -- the contract a
+  real Cloudflare Pages Function needs, since `js/fetch` there is
+  unconditionally async with no synchronous I/O primitive available at
+  all. Returns a promise-like of the parsed response body; throws the
+  same `kotoba XRPC error <status>: <nsid>` ex-info a non-200/201 status
+  produces (raised inside the `p-then` callback, so on `:cljs` it
+  surfaces as a rejected promise the caller's own `.catch` handles, same
+  as any other exception thrown inside a `.then` callback)."
+  [{:keys [http-fn json-write json-read]} conn nsid body]
+  (p-then (http-fn {:url     (xrpc-url conn nsid)
+                    :method  :post
+                    :headers (req-headers conn)
+                    :body    (json-write body)})
+          (fn [resp]
+            (when-not (#{200 201} (:status resp))
+              (throw (ex-info (str "kotoba XRPC error " (:status resp) ": " nsid)
+                              {:nsid nsid :status (:status resp) :body (:body resp)})))
+            (json-read (:body resp)))))
+
+(defn kotoba-api-async
+  "Like `kotoba-api`, but for hosts with NO synchronous I/O primitive at
+  all (a Cloudflare Pages Function, where `js/fetch` is unconditionally
+  async) -- every op threads through an ASYNC `:http-fn` (`(fn [{:keys
+  [url method headers body]}] => promise-like of {:status n :body s})`,
+  NOT `kotoba-api`'s synchronous `{:status n :body s}` directly) and
+  every `:db-api` fn below returns a promise-like in turn (a real
+  `js/Promise` under `:cljs`, the plain value itself under `:clj` -- see
+  `p-resolved`/`p-then`). Same `{:transact! :db :q :pull :entid}` shape,
+  same wire semantics/gotchas as `kotoba-api` (map-shaped `query_edn`,
+  always-wildcard `pattern_edn`, `:result_edn`/`:entity_id` field names,
+  `write-scope`/`read-scope`'s `:db_name`-vs-`:graph` split, double-EDN-
+  encoded cells -- see `kotoba-api`'s own docstring and this ns's private
+  helpers for the full rationale on each) -- this fn only adds the async
+  plumbing on top, it does not change any wire behavior.
+
+   host-caps: {:http-fn   (fn [{:keys [url method headers body]}] => promise-like of {:status n :body s})
+               :json-write (fn [clj-data] => json-string)
+               :json-read  (fn [json-string] => clj-data with keyword keys)}
+
+  `:db` has no I/O to perform (the conn map itself IS the db reference,
+  same as `kotoba-api`) but is still wrapped in `p-resolved` so it
+  satisfies the SAME promise-like contract as every other op here for a
+  caller that treats every `:db-api` fn uniformly."
+  [host-caps]
+  {:transact!
+   (fn [conn tx-data]
+     (p-then (post!-async host-caps conn "ai.gftd.apps.kotobase.datomic.transact"
+                          (cond-> (assoc (write-scope conn) :tx_edn (pr-str (vec tx-data)))
+                            (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))
+             ;; tx-report stub — checkpointer only needs side-effect, not tempids
+             (fn [_] {:tx-data tx-data})))
+
+   ;; The conn map itself IS the db reference — same as `kotoba-api`'s :db.
+   :db (fn [conn] (p-resolved conn))
+
+   :q
+   (fn [query conn & inputs]
+     (p-then (post!-async host-caps conn "ai.gftd.apps.kotobase.datomic.q"
+                          (cond-> (assoc (read-scope conn)
+                                         :query_edn  (pr-str (normalize-query query))
+                                         :inputs_edn (mapv pr-str inputs))
+                            (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))
+             (fn [data] (project-rows (:rows_edn data) (parse-find-spec query)))))
+
+   :pull
+   (fn [conn pattern eid]
+     (p-then (post!-async host-caps conn "ai.gftd.apps.kotobase.datomic.pull"
+                          (cond-> (assoc (read-scope conn)
+                                         :entity      (entity-wire-value eid)
+                                         :pattern_edn (pr-str '[*]))
+                            (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))
+             (fn [data]
+               (let [full (normalize-wildcard-pull (edn/read-string (:result_edn data)))
+                     full (if (and (vector? eid) (= 2 (count eid)))
+                            (assoc full (first eid) (second eid))
+                            full)]
+                 (if (= pattern '[*]) full (select-keys full pattern))))))
+
+   :entid
+   (fn [conn eid]
+     (p-then (post!-async host-caps conn "ai.gftd.apps.kotobase.datomic.entid"
+                          (cond-> (assoc (read-scope conn) :ident_edn (pr-str eid))
+                            (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))
+             (fn [data] (:entity_id data))))})
 
 ;; ─── kg.ingest surface ────────────────────────────────────────────────────────
 
