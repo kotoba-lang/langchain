@@ -137,10 +137,14 @@
   (:find (normalize-query query)))
 
 (defn- project-rows
-  "Maps kotoba rows_edn (Vec<Vec<edn-string>>) to the same result shape
-  as langchain.db/q: scalar value, collection vector, or set of tuples."
-  [rows-edn find-spec]
-  (let [rows    (mapv (fn [row] (mapv edn/read-string row)) rows-edn)
+  "Maps either legacy rows_edn strings or native JSON rows to the same result
+  shape as langchain.db/q: scalar value, collection vector, or set of tuples."
+  [wire-rows find-spec]
+  (let [decode-cell (fn [cell]
+                      (if (string? cell)
+                        (edn/read-string cell)
+                        cell))
+        rows    (mapv (fn [row] (mapv decode-cell row)) wire-rows)
         scalar? (= '. (last find-spec))
         coll?   (and (= 1 (count find-spec))
                      (vector? (first find-spec))
@@ -304,7 +308,8 @@
                                       ;; inputs_edn: non-$ bindings ($ is already the graph)
                                       :inputs_edn (mapv pr-str inputs))
                          (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))]
-       (project-rows (:rows_edn data) (parse-find-spec query))))
+       (project-rows (or (:rows_edn data) (:rows data) [])
+                     (parse-find-spec query))))
 
    :pull
    (fn [conn pattern eid]
@@ -458,7 +463,9 @@
                                          :query_edn  (pr-str (normalize-query query))
                                          :inputs_edn (mapv pr-str inputs))
                             (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))
-             (fn [data] (project-rows (:rows_edn data) (parse-find-spec query)))))
+             (fn [data]
+               (project-rows (or (:rows_edn data) (:rows data) [])
+                             (parse-find-spec query)))))
 
    :pull
    (fn [conn pattern eid]
