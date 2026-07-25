@@ -235,6 +235,30 @@
       (is (= "acct-1" (:rep/id result)))
       (is (= "Acme" (:rep/name result))))))
 
+(deftest pull-lookup-ref-does-not-backfill-the-identity-attribute-for-a-genuinely-nonexistent-entity
+  (testing "a wildcard pull for an entity that never existed comes back
+           completely empty ({}, no attrs at all) -- the identity-attr
+           backfill above must NOT fire in this case (only when other
+           attrs already came back), or every id-field-presence-gated
+           caller (crm.store's pull->rep, commitledger.store's pull->
+           application, ...) would see a fully-populated-looking (all-nil)
+           entity instead of nil for an id that was never transacted.
+           Found while migrating cloud-itonami-commitment-ledger/cloud-
+           itonami-isic-6492 to a live kotobase.net Store (kotobase-
+           persistence-migration, docs/adr/0004)."
+    (let [caps (mock-caps (atom [])
+                         (fn [_nsid _body] {:result_edn "{}"}))
+          result ((:pull (kdb/kotoba-api caps)) test-conn '[*] [:rep/id "never-existed"])]
+      (is (= {} result))
+      (is (nil? (:rep/id result))))))
+
+(deftest async-pull-lookup-ref-does-not-backfill-for-a-genuinely-nonexistent-entity
+  (let [caps (mock-caps (atom [])
+                      (fn [_nsid _body] {:result_edn "{}"}))
+        result ((:pull (kdb/kotoba-api-async caps)) test-conn '[*] [:rep/id "never-existed"])]
+    (is (= {} result))
+    (is (nil? (:rep/id result)))))
+
 (deftest pull-decodes-a-multi-word-string-value-without-truncating-it
   (testing "a string attribute's value comes back RAW on this wire (not
            pr-str'd/quoted like every other type) -- blindly edn/read-
@@ -411,3 +435,86 @@
       (is (= [{:pred "thread" :value "thread-A"}
               {:pred "step"   :value "0"}]
              (:claims (:body (first @captured))))))))
+
+;; ─── kotoba-api-async ────────────────────────────────────────────────────────
+;; Same `mock-caps` fixture as every sync test above -- on :clj, the private
+;; `then*` this ns's `kotoba-api-async` sequences through is just `(f v)`, so
+;; an :http-fn that returns a plain map (never a Promise, exactly what
+;; `mock-caps` already returns) makes every fn in `kotoba-api-async`'s map
+;; resolve to the SAME plain value `kotoba-api`'s fns return directly -- no
+;; `.then`/Promise needed to observe it from a JVM test. These tests prove
+;; the async variant's DECODED OUTPUT is identical to `kotoba-api`'s for the
+;; same wire responses, not merely that it compiles (`kotoba-api-async`'s
+;; :cljs branch, exercised for real by each cloud-itonami kotobase_store.cljc
+;; caller's own `.then` chain, is not separately re-tested here -- it reuses
+;; the exact same private helpers this file's other tests already cover).
+
+(deftest async-transact!-resolves-to-tx-report-stub
+  (let [captured (atom [])
+        caps     (mock-caps captured
+                            (fn [_nsid _body]
+                              {:status "ok" :graph "k51testgraph"}))
+        api      (kdb/kotoba-api-async caps)
+        result   ((:transact! api) test-conn [{:rep/id "r1"}])]
+    (is (= [{:rep/id "r1"}] (:tx-data result)))
+    (testing "same wire body as the sync :transact!"
+      (is (= "ai.gftd.apps.kotobase.datomic.transact" (:nsid (first @captured)))))))
+
+(deftest async-q-decodes-same-as-sync-q
+  (let [caps (mock-caps (atom [])
+                       (fn [_nsid _body]
+                         {:rows_edn [["\"rep-1\""] ["\"rep-2\""]]}))
+        sync-result  ((:q (kdb/kotoba-api caps)) '[:find [?id ...] :where [?e :rep/id ?id]] test-conn)
+        async-result ((:q (kdb/kotoba-api-async caps)) '[:find [?id ...] :where [?e :rep/id ?id]] test-conn)]
+    (is (= sync-result async-result ["rep-1" "rep-2"]))))
+
+(deftest async-pull-decodes-multi-word-string-same-as-sync-pull
+  (let [caps (mock-caps (atom [])
+                       (fn [_nsid _body]
+                         {:result_edn (pr-str {":account/name" #{"6399 Managed Job Board (aggregate free-tenant pool)"}
+                                                ":account/id"   #{"acct-1"}})}))
+        sync-out  ((:pull (kdb/kotoba-api caps)) test-conn '[*] [:account/id "acct-1"])
+        async-out ((:pull (kdb/kotoba-api-async caps)) test-conn '[*] [:account/id "acct-1"])]
+    (is (= sync-out async-out))
+    (is (= "6399 Managed Job Board (aggregate free-tenant pool)" (:account/name async-out)))))
+
+;; ─── decode-pull-value: blob-encoded compound values must NOT auto-decode ────
+;; Found while migrating cloud-itonami-commitment-ledger/cloud-itonami-
+;; isic-6492 to a live kotobase.net Store (kotobase-persistence-migration,
+;; docs/adr/0004): every consuming store's own `ls/enc`/`enc` convention
+;; pr-str's a compound value (a lender/pledge/tranche-schedule map, a
+;; ledger-fact map, ...) BEFORE transacting it, so this substrate stores +
+;; returns it as an ordinary STRING attribute -- but that string is ALSO,
+;; incidentally, valid round-trip-safe EDN, so `decode-pull-value` would
+;; wrongly auto-parse it into a live map/vector instead of leaving it as
+;; the raw string the caller's OWN `ls/dec*`/`enc` step expects to decode.
+
+(deftest pull-does-not-auto-decode-an-already-pr-str-d-map-blob
+  (let [lender {:lender/type :institutional :lender/id "did:key:z6MkX01" :lender/license-verified true}
+        blob (pr-str lender)
+        caps (mock-caps (atom [])
+                       (fn [_nsid _body]
+                         {:result_edn (pr-str {":application/lender" #{blob}
+                                                ":application/id" #{"acct-1"}})}))
+        out ((:pull (kdb/kotoba-api caps)) test-conn '[*] [:application/id "acct-1"])]
+    (is (= blob (:application/lender out))
+        "the blob stays the RAW pr-str'd string -- callers decode it themselves via ls/dec*/enc")
+    (is (= lender (edn/read-string (:application/lender out)))
+        "and that string still decodes correctly when the CALLER does it, exactly once")))
+
+(deftest pull-does-not-auto-decode-an-already-pr-str-d-vector-blob
+  (let [schedule [150000 150000]
+        blob (pr-str schedule)
+        caps (mock-caps (atom [])
+                       (fn [_nsid _body]
+                         {:result_edn (pr-str {":application/tranche-schedule" #{blob}
+                                                ":application/id" #{"acct-1"}})}))
+        out ((:pull (kdb/kotoba-api caps)) test-conn '[*] [:application/id "acct-1"])]
+    (is (= blob (:application/tranche-schedule out)))
+    (is (= schedule (edn/read-string (:application/tranche-schedule out))))))
+
+(deftest async-entid-decodes-same-as-sync-entid
+  (let [caps (mock-caps (atom []) (fn [_nsid _body] {:entity_id "rep-1"}))]
+    (is (= "rep-1"
+           ((:entid (kdb/kotoba-api-async caps)) test-conn [:rep/id "rep-1"])
+           ((:entid (kdb/kotoba-api caps)) test-conn [:rep/id "rep-1"])))))

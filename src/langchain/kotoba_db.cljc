@@ -188,23 +188,46 @@
   reader has no obligation to consume the whole string and doesn't error
   on leftover input via `read-string`.
 
-  Two guards, in order: (1) a parse that comes back as a SYMBOL is always
-  rejected -- this substrate's schema never legitimately stores a bare
-  symbol as an attribute value, so a symbol result means `v` was actually
-  a single-word raw string (`\"t1\"` parses to the symbol `t1`, and
-  `(pr-str 't1)` is ALSO `\"t1\"`, so the round-trip check below alone
-  cannot tell a genuine 1-word string apart from an accidental symbol
-  parse -- confirmed directly: this exact false-positive broke 3 existing
-  tests, e.g. a mocked `:checkpoint/thread \"t1\"` before this guard was
-  added). (2) otherwise, only trust the parse when re-printing it
-  recovers the EXACT original wire string (catches multi-token strings
-  like the space-containing example above); anything else falls back to
-  the raw string as-is."
+  THREE guards, in order: (1) a parse that comes back as a SYMBOL is
+  always rejected -- this substrate's schema never legitimately stores a
+  bare symbol as an attribute value, so a symbol result means `v` was
+  actually a single-word raw string (`\"t1\"` parses to the symbol `t1`,
+  and `(pr-str 't1)` is ALSO `\"t1\"`, so the round-trip check below
+  alone cannot tell a genuine 1-word string apart from an accidental
+  symbol parse -- confirmed directly: this exact false-positive broke 3
+  existing tests, e.g. a mocked `:checkpoint/thread \"t1\"` before this
+  guard was added). (2) a parse that comes back as a COLLECTION (map/
+  vector/set/list) is ALSO always rejected, same reasoning one level up:
+  every consuming store in this fleet (`commitledger.store`/`credit.
+  store`/`crm.store`/etc, via `langchain-store.core/enc`-`dec*` or a
+  hand-rolled equivalent) stores COMPOUND values as an ALREADY-`pr-str`'d
+  EDN-string blob specifically so THIS substrate treats them as an opaque
+  string and never expands them into sub-entities -- and that blob is
+  itself, incidentally, often a perfectly valid, ROUND-TRIP-SAFE EDN
+  form (e.g. a lender/pledge/tranche-schedule map or vector), so guard
+  (3) below cannot tell 'a genuine pre-encoded blob string, correctly
+  round-tripping to itself' apart from 'a plain non-collection value
+  that also happens to round-trip'. Confirmed directly: a mocked
+  `:application/lender` blob (`(pr-str {:lender/type :institutional
+  ...})`) parses to an actual map, round-trips byte-for-byte, and would
+  therefore have been WRONGLY auto-decoded here into a map instead of
+  staying the raw string the caller's OWN `ls/dec*`/`enc` convention
+  expects to decode itself -- every caller that stores such a blob would
+  see `edn/read-string` thrown against an already-a-map value one layer
+  up, discovered while migrating `cloud-itonami-commitment-ledger`/
+  `cloud-itonami-isic-6492` to a live kotobase.net Store (kotobase-
+  persistence-migration, docs/adr/0004), not previously covered because
+  ADR-2607184000's own live E2E round-trip (`crm.store`) happened not to
+  exercise any blob-encoded attribute. (3) otherwise, only trust the
+  parse when re-printing it recovers the EXACT original wire string
+  (catches multi-token strings like the space-containing example
+  above); anything else falls back to the raw string as-is."
   [v]
   (let [parsed (try (edn/read-string v)
                      (catch #?(:clj Exception :cljs :default) _ ::unparseable))]
     (if (and (not= parsed ::unparseable)
              (not (symbol? parsed))
+             (not (coll? parsed))
              (= v (pr-str parsed)))
       parsed
       v)))
@@ -342,8 +365,25 @@
            ;; on that id field being present in the pulled map) sees it —
            ;; without this, EVERY entity looked up by lookup ref pulled
            ;; back as a map indistinguishable from "entity does not
-           ;; exist" to those callers.
-           full (if (and (vector? eid) (= 2 (count eid)))
+           ;; exist" to those callers. BUT only when the entity actually
+           ;; HAS other attrs already (`(seq full)` non-empty BEFORE this
+           ;; backfill) -- a genuinely NON-existent entity's wildcard pull
+           ;; comes back completely empty (`{}`, no attrs at all, not even
+           ;; via a lookup ref), and backfilling the identity attr
+           ;; UNCONDITIONALLY (this ns's own original bugfix, applied with
+           ;; no such guard) makes THAT case indistinguishable from "an
+           ;; entity that exists with every non-identity attr nil" to the
+           ;; exact same id-field-presence-gated callers this backfill was
+           ;; added for (`crm.store`'s `pull->rep` et al., `commitledger.
+           ;; store`'s `pull->application`, ...) -- confirmed directly
+           ;; while migrating cloud-itonami-commitment-ledger/cloud-
+           ;; itonami-isic-6492 to a live kotobase.net Store (kotobase-
+           ;; persistence-migration, docs/adr/0004): `(store/application
+           ;; s "nope")` on a fresh, empty graph returned a full
+           ;; all-nil-fields map instead of nil, because the previous
+           ;; unconditional backfill added `{:application/id "nope"}` to
+           ;; an otherwise-completely-empty pull result.
+           full (if (and (seq full) (vector? eid) (= 2 (count eid)))
                   (assoc full (first eid) (second eid))
                   full)]
        (if (= pattern '[*]) full (select-keys full pattern))))
@@ -359,6 +399,116 @@
      (:entity_id (post! host-caps conn "ai.gftd.apps.kotobase.datomic.entid"
                         (cond-> (assoc (read-scope conn) :ident_edn (pr-str eid))
                           (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))))})
+
+;; ─── async api map (genuinely non-blocking :http-fn, e.g. js/fetch) ──────────
+;;
+;; `kotoba-api` above assumes a BLOCKING `:http-fn` (fine for a JVM caller's
+;; `java.net.http.HttpClient`, e.g. `crm.kotobase/jvm-http-fn` -- ADR-2607184000
+;; -- which can call `.send` and simply keep executing once it returns). A
+;; genuinely non-blocking edge runtime (a Cloudflare Pages Function's
+;; `js/fetch`, which has NO synchronous variant at all -- there is no blocking
+;; I/O primitive in that V8 isolate) cannot satisfy that contract: an
+;; `:http-fn` that returns a `js/Promise` instead of `{:status :body}` directly
+;; would make `post!` immediately misread `(:status a-promise)` as `nil` and
+;; throw "kotoba XRPC error nil: ..." before the real HTTP response ever
+;; arrives. `kotoba-api-async` below is the same wire format (reuses every
+;; private helper `kotoba-api` itself uses -- `normalize-query`/
+;; `decode-pull-value`/`normalize-wildcard-pull`/`entity-wire-value`/
+;; `write-scope`/`read-scope`/`project-rows`/`parse-find-spec` -- so every fix
+;; documented on those fns applies identically here), sequenced through a
+;; `then*` a caller can await portably: a real `js/Promise` under `:cljs`
+;; (chain with `.then`, or this fleet's own `pcompat.cljc`-style `pc/then`),
+;; or the plain decoded value itself under `:clj` (so a JVM test can use the
+;; exact same `pc/then` :clj branch, `(f p)`, unchanged -- see
+;; `commitledger.edge.pcompat`/`credit.edge.pcompat`, both already establish
+;; this identical plain-value-on-:clj/real-Promise-on-:cljs duality for their
+;; own edge-layer code; this fn is the same duality applied one layer down,
+;; at the kotobase XRPC transport itself).
+;;
+;; host-caps :http-fn shape for THIS api map: `(fn [{:keys [url method headers
+;; body]}] => a real js/Promise of {:status n :body s} under :cljs, or a
+;; plain {:status :body} map under :clj)` -- note this differs from
+;; `kotoba-api`'s :http-fn (always a plain map, never a Promise).
+
+(defn- then*
+  "Portable Promise-or-plain-value sequencing, private to this ns (no
+  dependency on any caller's own pcompat -- this stays a pure, zero-host-
+  dependency `.cljc` per this ns's own header). `:cljs`: `v` is a real
+  `js/Promise` -- `(.then v f)`. `:clj`: `v` is already a plain value
+  (there is no event loop to yield to in a synchronous JVM call) -- just
+  `(f v)`."
+  [v f]
+  #?(:cljs (.then v f)
+     :clj  (f v)))
+
+(defn- post!-async
+  "Like `post!`, but for an async `:http-fn` (see ns-section docstring
+  above) -- returns a `then*`-of the decoded response body."
+  [{:keys [http-fn json-write json-read]} conn nsid body]
+  (then* (http-fn {:url     (xrpc-url conn nsid)
+                   :method  :post
+                   :headers (req-headers conn)
+                   :body    (json-write body)})
+         (fn [resp]
+           (when-not (#{200 201} (:status resp))
+             (throw (ex-info (str "kotoba XRPC error " (:status resp) ": " nsid)
+                             {:nsid nsid :status (:status resp) :body (:body resp)})))
+           (json-read (:body resp)))))
+
+(defn kotoba-api-async
+  "Like `kotoba-api`, but every fn in the returned map returns a `then*`
+  of its result (a real `js/Promise` under `:cljs`, the plain value
+  itself under `:clj`) instead of the result directly -- for a genuinely
+  non-blocking `:http-fn` (see ns-section docstring above). Same wire
+  format as `kotoba-api` byte-for-byte; this fn changes ONLY how the HTTP
+  round-trip is sequenced, never what gets sent or how a response is
+  decoded.
+
+  NOTE: unlike `kotoba-api`'s `:transact!`, this `:transact!` resolves to
+  `{:tx-data tx-data}` too (same stub tx-report shape) -- callers get it
+  via `then*`/`.then` instead of a direct return."
+  [host-caps]
+  {:transact!
+   (fn [conn tx-data]
+     (then* (post!-async host-caps conn "ai.gftd.apps.kotobase.datomic.transact"
+                   (cond-> (assoc (write-scope conn) :tx_edn (pr-str (vec tx-data)))
+                     (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))
+            (fn [_] {:tx-data tx-data})))
+
+   :db identity
+
+   :q
+   (fn [query conn & inputs]
+     (then* (post!-async host-caps conn "ai.gftd.apps.kotobase.datomic.q"
+                   (cond-> (assoc (read-scope conn)
+                                  :query_edn  (pr-str (normalize-query query))
+                                  :inputs_edn (mapv pr-str inputs))
+                     (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))
+            (fn [data] (project-rows (:rows_edn data) (parse-find-spec query)))))
+
+   :pull
+   (fn [conn pattern eid]
+     (then* (post!-async host-caps conn "ai.gftd.apps.kotobase.datomic.pull"
+                   (cond-> (assoc (read-scope conn)
+                                  :entity      (entity-wire-value eid)
+                                  :pattern_edn (pr-str '[*]))
+                     (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))
+            (fn [data]
+              (let [full (normalize-wildcard-pull (edn/read-string (:result_edn data)))
+                    ;; only backfill when other attrs already came back --
+                    ;; see `kotoba-api`'s `:pull` for the full reasoning
+                    ;; (identical fix, same bug, this async twin).
+                    full (if (and (seq full) (vector? eid) (= 2 (count eid)))
+                           (assoc full (first eid) (second eid))
+                           full)]
+                (if (= pattern '[*]) full (select-keys full pattern))))))
+
+   :entid
+   (fn [conn eid]
+     (then* (post!-async host-caps conn "ai.gftd.apps.kotobase.datomic.entid"
+                   (cond-> (assoc (read-scope conn) :ident_edn (pr-str eid))
+                     (:kotoba/cacao conn) (assoc :cacao_b64 (:kotoba/cacao conn))))
+            (fn [data] (:entity_id data))))})
 
 ;; ─── kg.ingest surface ────────────────────────────────────────────────────────
 
