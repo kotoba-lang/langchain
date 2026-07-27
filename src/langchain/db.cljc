@@ -20,11 +20,6 @@
      :msg/thread {:db/valueType :db.type/ref}
      :person/emails {:db/cardinality :db.cardinality/many}}
 
-  A schema written in Datomic's installation tx-data dialect
-  (`[{:db/ident :thread/id :db/valueType .. } ..]`) converts to the above
-  with `schema-from-tx-data`, so one canonical schema value can drive both
-  a real Datomic connection and this store.
-
   Supported Datalog:
     - data patterns [?e :attr ?v] with constants, vars, _
     - predicate clauses [(< ?a ?b)] and function bindings [(inc ?a) ?b]
@@ -43,31 +38,6 @@
 
 (declare with)
 
-;; ───────────────────────── schema ─────────────────────────
-
-(defn schema-from-tx-data
-  "Converts a Datomic schema expressed as installation transaction data --
-  the `[{:db/ident :a/b :db/valueType .. :db/cardinality ..} ..]` form a real
-  transactor accepts -- into the DataScript-style map this namespace reads
-  (see the schema note in the ns docstring).
-
-  One canonical schema value can then drive both a real Datomic connection
-  and this in-memory store, instead of every host restating the same
-  attributes in its own dialect. Attribute maps carry over verbatim minus
-  `:db/ident` (which becomes the key), so declarations this store ignores --
-  `:db/doc`, `:db/index`, `:db/tupleAttrs` -- survive for the hosts that do
-  read them. Bare enum idents (`{:db/ident :status/active}`, no other keys)
-  are not attributes and are skipped."
-  [tx-data]
-  (reduce (fn [schema form]
-            (let [ident (:db/ident form)
-                  attr (dissoc form :db/ident)]
-              (if (and ident (seq attr))
-                (assoc schema ident attr)
-                schema)))
-          {}
-          tx-data))
-
 ;; ───────────────────────── db value & conn ─────────────────────────
 
 (defn empty-db
@@ -80,7 +50,7 @@
 
   PERSIST (optional, ADR-2607150000) is a duck-typed
   `{:append (fn [event]) :read (fn [since] -> [events])}` map — the same
-  method shapes as `kotoba-lang/kotobase`'s `kotobase.store/IStore`
+  method shapes as a host-supplied event-log operation map
   `-append`/`-read` (`langchain.db` does not `:require` that protocol
   directly; keeping the persistence port duck-typed preserves the
   zero-third-party-runtime-deps promise this namespace's own header
