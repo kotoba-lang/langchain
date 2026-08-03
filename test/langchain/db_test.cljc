@@ -170,3 +170,49 @@
         old (db/as-of conn (:tx r1))]
     (is (= 30 (db/q '[:find ?a . :where [_ :person/age ?a]] old)))
     (is (= 31 (db/q '[:find ?a . :where [_ :person/age ?a]] (db/db conn))))))
+
+;; ── schema-from-tx-data ──
+;; A Datomic schema is installed as transaction data; this store reads a
+;; DataScript-style map. Consumers used to write the same attributes twice,
+;; once per dialect, and the two copies drifted. These fix the one-way
+;; conversion so a single canonical schema value can drive both.
+
+(def ^:private datomic-schema
+  [{:db/ident :account/id :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/one :db/unique :db.unique/identity
+    :db/doc "Canonical account identity."}
+   {:db/ident :account/owner :db/valueType :db.type/ref
+    :db/cardinality :db.cardinality/one}
+   {:db/ident :account/tags :db/valueType :db.type/string
+    :db/cardinality :db.cardinality/many}
+   {:db/ident :account/key :db/valueType :db.type/tuple
+    :db/tupleAttrs [:account/id :account/owner]
+    :db/cardinality :db.cardinality/one :db/unique :db.unique/identity}
+   ;; a bare enum ident is a value, not an attribute
+   {:db/ident :account.status/active}])
+
+(deftest schema-from-tx-data-test
+  (let [schema (db/schema-from-tx-data datomic-schema)]
+    (testing ":db/ident becomes the key, the rest of the attribute map carries over"
+      (is (= {:db/valueType :db.type/string
+              :db/cardinality :db.cardinality/one
+              :db/unique :db.unique/identity
+              :db/doc "Canonical account identity."}
+             (:account/id schema))))
+    (testing "declarations this store ignores survive for hosts that read them"
+      (is (= [:account/id :account/owner] (get-in schema [:account/key :db/tupleAttrs]))))
+    (testing "bare enum idents are not attributes"
+      (is (not (contains? schema :account.status/active))))
+    (testing "the converted map drives this store's own schema behaviour"
+      (let [conn (db/create-conn schema)]
+        (db/transact! conn [{:account/id "a1" :account/tags ["x" "y"]}])
+        (db/transact! conn [{:account/id "a1" :account/tags ["z"]}])
+        (is (= 1 (db/q '[:find (count ?e) . :where [?e :account/id]] (db/db conn)))
+            ":db.unique/identity upserts rather than duplicating")
+        (is (= #{"x" "y" "z"}
+               (set (db/q '[:find [?t ...] :where [_ :account/tags ?t]] (db/db conn))))
+            ":db.cardinality/many accumulates")))))
+
+(deftest schema-from-tx-data-is-empty-for-empty-input
+  (is (= {} (db/schema-from-tx-data [])))
+  (is (= {} (db/schema-from-tx-data nil))))

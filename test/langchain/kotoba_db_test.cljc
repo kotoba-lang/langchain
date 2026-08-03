@@ -89,6 +89,17 @@
     (testing "projects scalar result"
       (is (= 5 step)))))
 
+(deftest q-accepts-native-json-rows
+  (let [caps (mock-caps (atom [])
+                        (fn [_nsid _body]
+                          {:graph "k51testgraph" :basis_t 7
+                           :rows [[5] [true] [":team-pro"]]}))
+        api (kdb/kotoba-api caps)]
+    (testing "current hosted rows keep native scalars and decode EDN strings"
+      (is (= #{[5] [true] [:team-pro]}
+             ((:q api) '[:find ?value :where [?e :value ?value]]
+              test-conn))))))
+
 ;; ─── q collection find ───────────────────────────────────────────────────────
 
 (deftest q-collection-find
