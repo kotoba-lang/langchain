@@ -95,6 +95,16 @@ src/langchain/
 (db/q '[:find ?tid (count ?m)
         :where [?t :thread/id ?tid] [?m :msg/thread ?t]]
       (db/db conn))
+
+;; JVM repository host: keep the query view local and editable as EDN.
+;; The repository publisher encrypts this state.edn only when it is pushed.
+(require '[langchain.edn-persist :as edn-persist]
+         '[langchain.persist :as persist])
+(def durable-conn
+  (db/create-conn memory/memory-schema
+                  (persist/scoped
+                   (edn-persist/host "workspace/did_example/state.edn")
+                   "chat/main")))
 ```
 
 ## Mapping from upstream

@@ -1,0 +1,60 @@
+(ns langchain.edn-persist-test
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
+            [clojure.test :refer [deftest is testing]]
+            [langchain.db :as db]
+            [langchain.edn-persist :as ep]
+            [langchain.persist :as persist])
+  (:import [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]))
+
+(def schema {:person/id {:db/unique :db.unique/identity}})
+
+(defn- temp-state-file []
+  (io/file (.toFile (Files/createTempDirectory
+                     "langchain-edn-persist-"
+                     (make-array FileAttribute 0)))
+           "state.edn"))
+
+(deftest editable-edn-persists-and-replays
+  (let [file (temp-state-file)
+        p (persist/scoped (ep/host file) "actor/person")
+        conn (db/create-conn schema p)]
+    (db/transact! conn [{:db/id -1 :person/id "alice" :person/name "Alice"}])
+    (testing "a new process-shaped connection replays the local journal"
+      (is (= "Alice"
+             (db/q '[:find ?n . :where
+                     [?e :person/id "alice"]
+                     [?e :person/name ?n]]
+                   (db/db (db/create-conn schema
+                                          (persist/scoped (ep/host file)
+                                                          "actor/person")))))))
+    (testing "direct agent edits outside the journal survive the next append"
+      (spit file (pr-str (assoc (edn/read-string (slurp file))
+                                :agent/note "keep me")))
+      (db/transact! conn [{:db/id -1 :person/id "bob" :person/name "Bob"}])
+      (is (= "keep me" (:agent/note (edn/read-string (slurp file))))))))
+
+(deftest streams-and-cursors-are-isolated
+  (let [file (temp-state-file)
+        host (ep/host file)]
+    ((:append host) "a" {:value 1})
+    ((:append host) "b" {:value 2})
+    ((:append host) "a" {:value 3})
+    (is (= [1 3] (mapv :value ((:read host) "a" 0))))
+    (is (= [3] (mapv :value ((:read host) "a" 1))))
+    (is (= [2] (mapv :value ((:read host) "b" 0))))))
+
+(deftest unsafe-edn-and-invalid-events-fail-closed
+  (let [file (temp-state-file)
+        host (ep/host file)]
+    (spit file "#unsafe/tag {:secret true}")
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                          #"tagged repository EDN denied"
+                          ((:read host) "actor" 0)))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                          #"event must be a map"
+                          ((:append (ep/host (temp-state-file))) "actor" [])))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                          #"invalid repository persistence stream"
+                          ((:read (ep/host (temp-state-file))) "" 0)))))
