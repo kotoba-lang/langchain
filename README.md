@@ -21,6 +21,7 @@ src/langchain/
   parser.cljc      str / edn / json output parsers
   memory.cljc      chat history as datoms
   db.cljc          Datomic-API-compatible EAV store + Datalog + pull (swappable)
+  repo_profile.cljc machine-checkable local-query/encrypted-publish contract
 ```
 
 ## Design
@@ -33,6 +34,10 @@ src/langchain/
   cardinality-many, lookup refs, `as-of`) is bundled; real Datomic
   Local or DataScript drops in via the `langchain.db/api` function
   map. Cross-thread views are Datalog queries (ADR-0010 pattern).
+- **Repository-driven Agent premise** — cloud-itonami, actors and artificial
+  organisms declare `langchain.repo-profile`. Private EDN is queried locally;
+  only Kagi-sealed chunks and Kotobase heads may enter DataLad/remotes. An
+  explicitly classified public fact repository is the narrow exception.
 
 ## Quickstart
 

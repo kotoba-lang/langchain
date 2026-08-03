@@ -25,7 +25,8 @@
     ;; ... process restart ...
     (def conn2 (db/create-conn schema (kp/persist-for store \"my-thread\")))
     (db/q '[:find ?e :where [?e :thread/id _]] (db/db conn2))  ; replayed"
-  (:require [kotobase.store :as st]))
+  (:require [kotobase.store :as st]
+            [langchain.db :as db]))
 
 (defn persist-for
   "A `langchain.db/create-conn` `persist` map (`{:append :read}`) backed by
@@ -35,3 +36,11 @@
   [store stream]
   {:append (fn [event] (st/-append store stream event))
    :read (fn [since] (st/-read store stream since))})
+
+(defn local-conn
+  "Create and hydrate a local Datalog connection whose append-only tx stream
+  is backed by STORE. For private remote state, STORE must be a fail-closed
+  seal/unseal adapter; this function deliberately provides no remote query
+  path."
+  [schema store stream]
+  (db/create-conn schema (persist-for store stream)))

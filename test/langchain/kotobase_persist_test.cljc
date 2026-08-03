@@ -48,3 +48,12 @@
     (is (= "Carol"
            (db/q '[:find ?n . :where [?e :person/id "carol"] [?e :person/name ?n]]
                  (db/db conn))))))
+
+(deftest local-conn-is-the-query-locality-boundary
+  (let [store (local/local-store)
+        conn (kp/local-conn schema store "private-user-stream")]
+    (db/transact! conn [{:db/id -1 :person/id "one" :person/name "Local"}])
+    (is (= "Local"
+           (db/q '[:find ?n . :where [?e :person/id "one"] [?e :person/name ?n]]
+                 (db/db (kp/local-conn schema store
+                                       "private-user-stream")))))))
