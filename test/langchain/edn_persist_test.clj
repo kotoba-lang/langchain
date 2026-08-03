@@ -58,3 +58,15 @@
     (is (thrown-with-msg? clojure.lang.ExceptionInfo
                           #"invalid repository persistence stream"
                           ((:read (ep/host (temp-state-file))) "" 0)))))
+
+(deftest deployment-environment-contract-is-shared-and-required
+  (let [file (temp-state-file)
+        persist (ep/configured-persist
+                 {"KOTOBA_REPOSITORY_STATE_FILE" (.getPath file)
+                  "KOTOBA_REPOSITORY_STREAM" "tenant/actor"}
+                 "ignored")]
+    ((:append persist) {:tx 1 :tx-data []})
+    (is (= 1 (:tx (first ((:read persist) 0)))))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                          #"KOTOBA_REPOSITORY_STATE_FILE is required"
+                          (ep/configured-persist {} "tenant/actor")))))

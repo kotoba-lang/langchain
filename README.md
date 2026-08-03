@@ -105,6 +105,12 @@ src/langchain/
                   (persist/scoped
                    (edn-persist/host "workspace/did_example/state.edn")
                    "chat/main")))
+
+;; Production actor entrypoints share KOTOBA_REPOSITORY_STATE_FILE and may
+;; override their default stream with KOTOBA_REPOSITORY_STREAM.
+(def deployed-conn
+  (db/create-conn memory/memory-schema
+                  (edn-persist/required-persist-from-env "chat/main")))
 ```
 
 ## Mapping from upstream

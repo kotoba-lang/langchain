@@ -105,3 +105,28 @@
                   (filter #(> (long (:seq %)) since))
                   (sort-by :seq)
                   vec)))))}))
+
+(defn configured-persist
+  "Build the connection persistence map from an environment-shaped map.
+  `KOTOBA_REPOSITORY_STATE_FILE` is required; `KOTOBA_REPOSITORY_STREAM`
+  overrides DEFAULT-STREAM. Keeping this contract here prevents every actor
+  deployment from inventing a different repository coordinate convention."
+  [environment default-stream]
+  (let [file (not-empty (get environment "KOTOBA_REPOSITORY_STATE_FILE"))
+        stream (or (not-empty (get environment "KOTOBA_REPOSITORY_STREAM"))
+                   default-stream)]
+    (when-not file
+      (throw (ex-info "KOTOBA_REPOSITORY_STATE_FILE is required"
+                      {:type :langchain.edn-persist/state-file-required})))
+    (when-not (valid-stream? stream)
+      (throw (ex-info "invalid repository persistence stream"
+                      {:type :langchain.edn-persist/invalid-stream
+                       :stream stream})))
+    (let [{:keys [append read]} (host file)]
+      {:append (fn [event] (append stream event))
+       :read (fn [since] (read stream since))})))
+
+(defn required-persist-from-env
+  "Production entrypoint adapter for `langchain.db/create-conn`."
+  [default-stream]
+  (configured-persist (System/getenv) default-stream))
