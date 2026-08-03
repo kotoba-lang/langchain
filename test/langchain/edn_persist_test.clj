@@ -70,3 +70,14 @@
     (is (thrown-with-msg? clojure.lang.ExceptionInfo
                           #"KOTOBA_REPOSITORY_STATE_FILE is required"
                           (ep/configured-persist {} "tenant/actor")))))
+
+(deftest concurrent-jvm-appends-are-serialized-before-the-file-lock
+  (let [file (temp-state-file)
+        host (ep/host file)
+        writers (doall (for [n (range 40)]
+                         (future ((:append host) "concurrent" {:n n}))))]
+    (doseq [writer writers] @writer)
+    (let [events ((:read host) "concurrent" 0)]
+      (is (= 40 (count events)))
+      (is (= (vec (range 1 41)) (mapv :seq events)))
+      (is (= (set (range 40)) (set (map :n events)))))))

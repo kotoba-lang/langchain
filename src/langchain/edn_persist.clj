@@ -15,6 +15,7 @@
 
 (def ^:private streams-key :kotoba.agent/streams)
 (def ^:private sequence-key :kotoba.agent/sequence)
+(defonce ^:private local-locks (atom {}))
 
 (defn- valid-stream? [stream]
   (and (string? stream) (seq stream) (<= (count stream) 1024)))
@@ -57,13 +58,20 @@
 (defn- with-lock [file f]
   (let [parent (or (.getParentFile file) (io/file "."))
         _ (.mkdirs parent)
-        lock-file (io/file parent (str "." (.getName file) ".lock"))]
-    (with-open [channel (FileChannel/open
-                         (.toPath lock-file)
-                         (into-array OpenOption [StandardOpenOption/CREATE
-                                                 StandardOpenOption/WRITE]))
-                _lock (.lock channel)]
-      (f))))
+        lock-file (io/file parent (str "." (.getName file) ".lock"))
+        path (.getCanonicalPath lock-file)
+        local-lock (get (swap! local-locks
+                               #(if (contains? % path) % (assoc % path (Object.))))
+                        path)]
+    ;; FileChannel.lock coordinates processes but throws OverlappingFileLockException
+    ;; for competing threads in this JVM. Serialize those threads first.
+    (locking local-lock
+      (with-open [channel (FileChannel/open
+                           (.toPath lock-file)
+                           (into-array OpenOption [StandardOpenOption/CREATE
+                                                   StandardOpenOption/WRITE]))
+                  _lock (.lock channel)]
+        (f)))))
 
 (defn host
   "Return a `langchain.persist/scoped` compatible append/read host backed by
