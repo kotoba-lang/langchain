@@ -55,7 +55,11 @@
       (finally
         (Files/deleteIfExists (.toPath tmp))))))
 
-(defn- with-lock [file f]
+(defn with-state-lock
+  "Run F while holding the canonical state file's JVM-local and process-wide
+  lock. Repository hosts use this same boundary for direct EDN edits so an
+  actor append cannot overwrite a cooperating agent edit (or vice versa)."
+  [file f]
   (let [parent (or (.getParentFile file) (io/file "."))
         _ (.mkdirs parent)
         lock-file (io/file parent (str "." (.getName file) ".lock"))
@@ -88,7 +92,7 @@
        (when-not (map? event)
          (throw (ex-info "repository persistence event must be a map"
                          {:type :langchain.edn-persist/invalid-event})))
-       (with-lock
+       (with-state-lock
          file
          (fn []
            (let [state (read-state file)
@@ -105,7 +109,7 @@
          (throw (ex-info "invalid repository persistence stream"
                          {:type :langchain.edn-persist/invalid-stream
                           :stream stream})))
-       (with-lock
+       (with-state-lock
          file
          (fn []
            (let [since (long (or since 0))]
