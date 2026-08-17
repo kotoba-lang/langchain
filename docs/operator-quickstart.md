@@ -152,10 +152,21 @@ clojure -M -e "
 ```
 
 ```
+#'user/conn
+#'user/hist
+0
 wrote: 1 message(s)
+```
+```
+#'user/conn
+#'user/hist
 recovered: [[:user "remember me"]]
 datalog: #{["t1" 1]}
 ```
+
+`clojure -M -e` prints the value of every top-level form, so the `#'user/…`
+lines and the bare `0` (what `append!` returned) are the runner echoing, not
+output of yours. The lines that matter are the last one of each.
 
 The state file is a readable EDN transaction log, one stream per key:
 
