@@ -122,7 +122,15 @@ zero-dependency / injected-I/O rationale.
 ## Tests / example
 
 ```sh
-clojure -M:test                                  # 15 tests, 59 assertions
+clojure -M:test                                  # 99 tests, 239 assertions
 clojure -Sdeps '{:paths ["src" "examples"]}' \
-        -M -e "(require 'chain) (chain/-main)"
+        -M -e "(require 'chain) (chain/-main)"   # offline, mock model
+clojure -Sdeps '{:paths ["src" "examples"]}' \
+        -M -e "(require 'live-murakumo) (live-murakumo/-main)"   # real model
 ```
+
+New here? [docs/operator-quickstart.md](docs/operator-quickstart.md) walks the
+five steps in order — resolve deps, test, run offline, call a real model
+through the injected-I/O seam, and make chat history durable across processes —
+showing the actual output of each, plus the two failure modes that look like
+bugs and aren't.
