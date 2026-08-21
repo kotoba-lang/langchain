@@ -80,7 +80,7 @@
 
   PERSIST (optional, ADR-2607150000) is a duck-typed
   `{:append (fn [event]) :read (fn [since] -> [events])}` map — the same
-  method shapes as `kotoba-lang/kotobase`'s `kotobase.store/IStore`
+  method shapes as a host-supplied event-log operation map
   `-append`/`-read` (`langchain.db` does not `:require` that protocol
   directly; keeping the persistence port duck-typed preserves the
   zero-third-party-runtime-deps promise this namespace's own header
