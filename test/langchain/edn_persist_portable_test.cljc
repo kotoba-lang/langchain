@@ -1,0 +1,132 @@
+(ns langchain.edn-persist-portable-test
+  "The persistence policy and the store contract, on both runtimes.
+
+  `edn_persist_test.clj` covers the same namespace through the FILESYSTEM host
+  — temp directories, a real lock, concurrent JVM threads — and stays JVM-only
+  because those are JVM facts. This file covers what is left when the host is
+  taken away, which is where the decisions are, and it runs anywhere.
+
+  The `memory-store` here is not a mock. It is the implementation this library
+  ships for a standalone run, so these assertions exercise shipped code rather
+  than a stand-in written for the test."
+  (:require [clojure.test :refer [deftest is testing]]
+            [langchain.edn-persist :as persist]
+            [langchain.persist :as scoped]))
+
+(deftest a-stream-name-is-bounded
+  (is (persist/valid-stream? "agent"))
+  (is (not (persist/valid-stream? "")))
+  (is (not (persist/valid-stream? nil)))
+  (is (not (persist/valid-stream? :agent)) "a keyword is not a stream name")
+  (is (persist/valid-stream? (apply str (repeat 1024 "a"))))
+  (is (not (persist/valid-stream? (apply str (repeat 1025 "a"))))
+      "the bound is inclusive at 1024"))
+
+(deftest an-absent-document-reads-as-empty-rather-than-failing
+  (is (= {} (persist/parse-state nil)))
+  (is (= {} (persist/parse-state "")))
+  (is (= {} (persist/parse-state "   "))
+      "so the first append is the same code path as every later one"))
+
+(defn- refusal [text]
+  (try (persist/parse-state text) nil
+       (catch #?(:clj Exception :cljs :default) e (:type (ex-data e)))))
+
+(deftest editable-edn-fails-closed-on-what-it-cannot-trust
+  (testing "an unknown reader tag is a call into whatever the host registered"
+    (is (= :langchain.edn-persist/tagged-edn (refusal "{:v #evil/tag {}}")))
+    (is (= :langchain.edn-persist/tagged-edn (refusal "{:v #js {}}"))))
+  (testing "but #inst and #uuid are built into clojure.edn and ARE read"
+    ;; Not an oversight and not a hole: `:default` is never consulted for
+    ;; these, both construct a value from a literal without reaching host code,
+    ;; and BOTH RUNTIMES DO THE SAME THING. Pinned here because the JVM-only
+    ;; docstring used to claim tagged literals were refused without
+    ;; qualification, and no runtime disagreed loudly enough to catch it.
+    (is (= 1 (count (persist/parse-state "{:v #inst \"2026-08-27T00:00:00Z\"}"))))
+    (is (= 1 (count (persist/parse-state
+                     "{:v #uuid \"00000000-0000-0000-0000-000000000000\"}")))))
+  (testing "the root must be a map, because keys are what agents edit"
+    (is (= :langchain.edn-persist/invalid-root (refusal "[1 2 3]")))
+    (is (= :langchain.edn-persist/invalid-root (refusal "\"a string\""))
+        "a document that reads but is not a map is refused for its own reason")))
+
+(deftest the-sequence-is-per-document-not-per-stream
+  (let [[s1 e1] (persist/append-to-state {} "alpha" {:kind :a})
+        [s2 e2] (persist/append-to-state s1 "beta" {:kind :b})
+        [_ e3] (persist/append-to-state s2 "alpha" {:kind :c})]
+    (is (= [1 2 3] [(:seq e1) (:seq e2) (:seq e3)])
+        "a cursor taken in one stream orders against events in another")))
+
+(deftest a-cursor-answers-only-what-follows-it
+  (let [state (reduce (fn [s n] (first (persist/append-to-state s "agent" {:n n})))
+                      {} (range 5))]
+    (is (= [0 1 2 3 4] (map :n (persist/events-since state "agent" 0))))
+    (is (= [3 4] (map :n (persist/events-since state "agent" 3))))
+    (is (= [] (persist/events-since state "agent" 99)))
+    (is (= [] (persist/events-since state "unknown-stream" 0))
+        "an unknown stream is empty, not an error"))
+  (testing "nil is the beginning"
+    (let [state (first (persist/append-to-state {} "agent" {:n 1}))]
+      (is (= 1 (count (persist/events-since state "agent" nil)))))))
+
+(deftest an-append-preserves-keys-it-does-not-own
+  ;; The reason this namespace re-reads inside the lock instead of writing a
+  ;; remembered snapshot. An agent edits the document directly; those keys must
+  ;; survive an append that knows nothing about them.
+  (let [store (persist/memory-store (pr-str {:agent/notes "written by hand"}))
+        {:keys [append]} (persist/store-host store)]
+    (append "agent" {:kind :turn})
+    (let [after (persist/parse-state (persist/read-text store))]
+      (is (= "written by hand" (:agent/notes after)))
+      (is (= 1 (:kotoba.agent/sequence after))))))
+
+(deftest the-store-host-round-trips-through-the-shipped-memory-store
+  (let [{:keys [append read] :as host} (persist/store-host (persist/memory-store))]
+    (is (= {:kind :a :seq 1} (append "agent" {:kind :a})))
+    (is (= {:kind :b :seq 2} (append "agent" {:kind :b})))
+    (is (= [{:kind :b :seq 2}] (read "agent" 1)))
+    (testing "and it satisfies langchain.persist/scoped, which is the consumer"
+      (let [bound (scoped/scoped host "agent")]
+        (is (= {:kind :c :seq 3} ((:append bound) {:kind :c})))
+        (is (= [{:kind :c :seq 3}] ((:read bound) 2)))))))
+
+(deftest the-host-refuses-what-it-cannot-record
+  (let [{:keys [append read]} (persist/store-host (persist/memory-store))]
+    (is (= :langchain.edn-persist/invalid-stream
+           (try (append "" {:kind :a}) nil
+                (catch #?(:clj Exception :cljs :default) e (:type (ex-data e))))))
+    (is (= :langchain.edn-persist/invalid-event
+           (try (append "agent" "not a map") nil
+                (catch #?(:clj Exception :cljs :default) e (:type (ex-data e))))))
+    (is (= :langchain.edn-persist/invalid-stream
+           (try (read nil 0) nil
+                (catch #?(:clj Exception :cljs :default) e (:type (ex-data e))))))))
+
+(deftest the-deployment-coordinate-contract-is-shared-and-required
+  (testing "the state file is required rather than defaulted"
+    (is (= :langchain.edn-persist/state-file-required
+           (try (persist/configured-persist {} "fallback") nil
+                (catch #?(:clj Exception :cljs :default) e (:type (ex-data e)))))))
+  (testing "the stream may be overridden by the environment"
+    ;; A store is injected, which is what makes this assertion possible on a
+    ;; host with no filesystem at all.
+    (let [store (persist/memory-store)
+          {:keys [append]} (persist/configured-persist
+                            {"KOTOBA_REPOSITORY_STATE_FILE" "/ignored"
+                             "KOTOBA_REPOSITORY_STREAM" "chosen"}
+                            "fallback"
+                            (fn [_] store))]
+      (append {:kind :a})
+      (is (= ["chosen"]
+             (keys (:kotoba.agent/streams
+                    (persist/parse-state (persist/read-text store)))))))))
+
+(deftest a-host-with-no-filesystem-refuses-rather-than-guessing
+  #?(:cljs
+     (is (= :langchain.edn-persist/no-default-store
+            (try (persist/default-store "/tmp/x") nil
+                 (catch :default e (:type (ex-data e)))))
+         "Node, a Worker and a browser want three different stores")
+     :clj
+     (is (satisfies? persist/IStateStore (persist/default-store "/tmp/edn-persist-probe"))
+         "the JVM has one obvious answer and ships it")))
