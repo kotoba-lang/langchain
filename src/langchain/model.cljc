@@ -52,8 +52,29 @@
 
 ;; ───────────────────────── Anthropic adapter ─────────────────────────
 
-(def ^:private anthropic-url "https://api.anthropic.com/v1/messages")
-(def default-model "claude-opus-4-8")
+(def anthropic-direct-url
+  "Anthropic's own endpoint. Reaching it is now an explicit opt-in — pass it as
+  `:url`. It is public rather than private precisely so that opting in is one
+  keyword and not a copied string literal."
+  "https://api.anthropic.com/v1/messages")
+
+(def murakumo-url
+  "murakumo's Anthropic-wire endpoint, and the default for this adapter.
+
+  murakumo serves the Messages API in front of whatever the fleet is actually
+  running, and (since ADR-2608300200) relays publisher-namespaced models such
+  as `anthropic/claude-sonnet-4.6` through one gateway. So the default costs a
+  caller nothing in reach, and buys three things a vendor-direct call does not
+  have: one identity (passkey / CACAO / mk1), one payment rail (x402, credits),
+  and one meter."
+  "https://api.murakumo.cloud/v1/messages")
+
+(def default-model
+  "`murakumo-main` is an ALIAS resolved by murakumo's KV at request time, never
+  a checkpoint id (ADR-2607173100). Baking a concrete id here would break every
+  caller on the day the fleet swaps models — which is the exact failure
+  ADR-2608201400 measured."
+  "murakumo-main")
 
 (defn- msg->anthropic [{:keys [role content tool-calls tool-call-id error?]}]
   (case role
@@ -113,22 +134,55 @@
       (seq calls) (assoc :tool-calls calls)
       usage (assoc :usage usage))))
 
-(defn anthropic-model
-  "Anthropic Messages API chat model.
+(defn vendor-key?
+  "Does this look like a key issued by Anthropic (`sk-ant-…`)?
 
-    (anthropic-model {:api-key …
-                      :model \"claude-opus-4-8\"
-                      :http-fn host-fetch
-                      :json-write … :json-read …})"
+  Used to refuse sending one somewhere else. Prefix-matching a credential is a
+  heuristic, and it is the right kind: a false positive is a loud error the
+  caller fixes by naming the URL, while the false negative it cannot catch —
+  a key with no recognisable prefix — was never distinguishable from a
+  murakumo token anyway."
+  [k]
+  (boolean (when (string? k)
+             (= "sk-ant-" (subs k 0 (min 7 (count k)))))))
+
+(defn anthropic-model
+  "Anthropic-Messages-shaped chat model. **Defaults to murakumo, not to
+  Anthropic.**
+
+    (anthropic-model {:http-fn host-fetch})          ; murakumo-main via murakumo
+    (anthropic-model {:url anthropic-direct-url      ; vendor-direct, explicit
+                      :api-key sk-ant-… :model \"claude-opus-4-8\"
+                      :http-fn host-fetch})
+
+  The wire format is Anthropic's; the default host is ours. Every itonami actor
+  reaches inference through this one constructor, so the value of `:url`'s
+  default is the workspace's real answer to `where does inference go`. It said
+  `api.anthropic.com` while cloud-itonami's front page said inference was
+  delegated to Murakumo — true for 25 of 1,108 governed repos. This makes the
+  page true by default instead of by convention.
+
+  Reaching Anthropic directly still works and always will; it is now a keyword
+  rather than a silence."
   [{:keys [api-key model max-tokens http-fn json-write json-read url]
     :or {model default-model
-         url anthropic-url
+         url murakumo-url
          #?@(:cljs [json-write (fn [m] (js/JSON.stringify (clj->js m)))
                     json-read (fn [s] (js->clj (js/JSON.parse s) :keywordize-keys true))])}}]
   (when-not http-fn
     (throw (ex-info ":http-fn must be injected (host capability)" {})))
   (when-not (and json-write json-read)
     (throw (ex-info ":json-write/:json-read must be injected on this host" {})))
+  ;; Flipping the default host means a caller who used to reach Anthropic with
+  ;; an Anthropic key now reaches murakumo with it. Sending a vendor secret to
+  ;; a different host is a disclosure, and it would be a quiet one: murakumo
+  ;; answers 401 and the caller reads it as a bad key. Refuse at construction,
+  ;; naming both halves, so the fix is obvious in either direction.
+  (when (and (vendor-key? api-key) (not= url anthropic-direct-url))
+    (throw (ex-info "refusing to send an Anthropic key to a non-Anthropic host"
+                    {:url url
+                     :hint (str "pass :url anthropic-direct-url to reach Anthropic, "
+                                "or supply a murakumo credential instead")})))
   (reify ChatModel
     (-generate [_ messages opts]
       (let [body (request-body messages (merge {:model model :max-tokens max-tokens} opts))
