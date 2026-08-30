@@ -58,13 +58,22 @@
           resp (.send client (.build req) (HttpResponse$BodyHandlers/ofString))]
       {:status (.statusCode resp) :body (.body resp)}))
 
+  ;; Vendor-direct. The adapter now defaults to murakumo, so reaching
+  ;; Anthropic names its URL — and passing an `sk-ant-` key without naming it
+  ;; is refused rather than forwarded to another host.
   (def claude
     (model/anthropic-model
-     {:api-key (System/getenv "ANTHROPIC_API_KEY")
+     {:url model/anthropic-direct-url
+      :api-key (System/getenv "ANTHROPIC_API_KEY")
       :model "claude-opus-4-8"
       :http-fn jvm-http
       :json-write json/write-str
       :json-read #(json/read-str % :key-fn keyword)}))
+  ;; The default needs no url and no vendor key -- it is murakumo-main
+  ;; through api.murakumo.cloud:
+  (def default-model (model/anthropic-model {:http-fn jvm-http
+                                             :json-write json/write-str
+                                             :json-read #(json/read-str % :key-fn keyword)}))
   ;; On a WASM/JS host: :http-fn → the host's fetch binding;
   ;; :json-write/:json-read default to js/JSON in cljs.
   )
