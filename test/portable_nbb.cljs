@@ -15,6 +15,7 @@
   Listed namespaces are the ones whose `:cljs` branch is real. A namespace that
   needs a JVM host stays out rather than being stubbed in."
   (:require [cljs.test :as t]
+            [langchain.catalog-test]
             [langchain.edn-persist-portable-test]))
 
 (defmethod t/report [::t/default :end-run-tests] [m]
@@ -24,4 +25,5 @@
   (when-not (t/successful? m)
     (set! (.-exitCode js/process) 1)))
 
-(t/run-tests 'langchain.edn-persist-portable-test)
+(t/run-tests 'langchain.catalog-test
+             'langchain.edn-persist-portable-test)

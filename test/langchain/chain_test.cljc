@@ -68,7 +68,13 @@
                                            :input {:location "Paris"}}]})
                  (msg/tool-result "t1" "72F")]
                 {:tools [weather-tool]})]
-      (is (= "claude-opus-4-8" (:model body)))
+      ;; The literal belongs in model-test/default-model-is-the-alias-not-a-checkpoint,
+      ;; which pins WHICH alias. What chain-test owes is the seam: request-body
+      ;; with no :model must reach for the default rather than emit nil. Asserting
+      ;; the literal here duplicated the pin, and when a46c87c moved the default to
+      ;; murakumo-main this copy was the one nobody updated.
+      (is (= model/default-model (:model body)))
+      (is (some? (:model body)))
       (is (= "be terse" (:system body)))
       (is (= [{:name "get_weather"
                :description "Get current weather for a location"
