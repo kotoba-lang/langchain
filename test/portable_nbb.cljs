@@ -13,10 +13,16 @@
   that executes it would have moved the claim, not the fact.
 
   Listed namespaces are the ones whose `:cljs` branch is real. A namespace that
-  needs a JVM host stays out rather than being stubbed in."
+  needs a JVM host stays out rather than being stubbed in -- and so does one
+  whose dependency lives outside the `src:test` classpath this runner takes,
+  which is why `langchain.json-test` is absent while message/prompt/tool,
+  which depend on nothing beyond `src`, are here."
   (:require [cljs.test :as t]
             [langchain.catalog-test]
-            [langchain.edn-persist-portable-test]))
+            [langchain.edn-persist-portable-test]
+            [langchain.message-test]
+            [langchain.prompt-test]
+            [langchain.tool-test]))
 
 (defmethod t/report [::t/default :end-run-tests] [m]
   (println "\nportable cljc —" (:test m) "tests,"
@@ -26,4 +32,7 @@
     (set! (.-exitCode js/process) 1)))
 
 (t/run-tests 'langchain.catalog-test
-             'langchain.edn-persist-portable-test)
+             'langchain.edn-persist-portable-test
+             'langchain.message-test
+             'langchain.prompt-test
+             'langchain.tool-test)
