@@ -1,6 +1,6 @@
 (ns langchain.parser
   "Output parsers — Runnables that turn assistant messages into data."
-  (:require #?(:clj [clojure.edn :as edn]
+  (:require #?(:clj [kotoba.lang.edn :as edn]
                :cljs [cljs.reader :as edn])
             [clojure.string :as str]
             [langchain.message :as msg]

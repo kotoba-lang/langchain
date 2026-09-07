@@ -14,7 +14,7 @@
   themselves; only the reader-conditional `:cljs` branches document what
   a real `js/Promise`-based host would see."
   (:require [clojure.test :refer [deftest is testing]]
-            #?(:clj  [clojure.edn :as edn]
+            #?(:clj  [kotoba.lang.edn :as edn]
                :cljs [cljs.reader :as edn])
             [clojure.string :as str]
             [langchain.kotoba-db :as kdb]))

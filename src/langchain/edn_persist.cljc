@@ -32,7 +32,7 @@
   A host that is not a filesystem — a Worker with a KV binding, a browser with
   IndexedDB — implements the same three operations and reuses every line of the
   policy."
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.string :as str])
   #?(:clj (:import [java.nio.channels FileChannel]
                    [java.nio.charset StandardCharsets]

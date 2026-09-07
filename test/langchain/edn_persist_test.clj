@@ -1,5 +1,5 @@
 (ns langchain.edn-persist-test
-  (:require [clojure.edn :as edn]
+  (:require [kotoba.lang.edn :as edn]
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [langchain.db :as db]

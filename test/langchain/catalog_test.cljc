@@ -22,7 +22,7 @@
   relative path below resolves against."
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.string :as str]
-            #?(:clj [clojure.edn :as edn]
+            #?(:clj [kotoba.lang.edn :as edn]
                :cljs [cljs.reader :as edn])
             #?(:cljs ["fs" :as fs])))
 

@@ -1,6 +1,6 @@
 (ns langchain.kotoba-db-test
   (:require [clojure.test :refer [deftest is testing]]
-            #?(:clj  [clojure.edn :as edn]
+            #?(:clj  [kotoba.lang.edn :as edn]
                :cljs [cljs.reader :as edn])
             [clojure.string :as str]
             [langchain.kotoba-db :as kdb]))

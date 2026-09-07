@@ -5,7 +5,7 @@
   One thread entity per conversation; one entity per message. The
   history is therefore queryable across threads — e.g. \"all tool
   errors yesterday\" is a Datalog query, not a log grep."
-  (:require #?(:clj [clojure.edn :as edn]
+  (:require #?(:clj [kotoba.lang.edn :as edn]
                :cljs [cljs.reader :as edn])
             [langchain.db :as db]))
 
