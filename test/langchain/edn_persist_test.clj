@@ -50,7 +50,7 @@
         host (ep/host file)]
     (spit file "#unsafe/tag {:secret true}")
     (is (thrown-with-msg? clojure.lang.ExceptionInfo
-                          #"tagged repository EDN denied"
+                          #"EDN dispatch forms are forbidden"
                           ((:read host) "actor" 0)))
     (is (thrown-with-msg? clojure.lang.ExceptionInfo
                           #"event must be a map"

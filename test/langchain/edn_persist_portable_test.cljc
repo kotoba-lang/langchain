@@ -33,18 +33,25 @@
        (catch #?(:clj Exception :cljs :default) e (:type (ex-data e)))))
 
 (deftest editable-edn-fails-closed-on-what-it-cannot-trust
-  (testing "an unknown reader tag is a call into whatever the host registered"
-    (is (= :langchain.edn-persist/tagged-edn (refusal "{:v #evil/tag {}}")))
-    (is (= :langchain.edn-persist/tagged-edn (refusal "{:v #js {}}"))))
-  (testing "but #inst and #uuid are built into clojure.edn and ARE read"
-    ;; Not an oversight and not a hole: `:default` is never consulted for
-    ;; these, both construct a value from a literal without reaching host code,
-    ;; and BOTH RUNTIMES DO THE SAME THING. Pinned here because the JVM-only
-    ;; docstring used to claim tagged literals were refused without
-    ;; qualification, and no runtime disagreed loudly enough to catch it.
-    (is (= 1 (count (persist/parse-state "{:v #inst \"2026-08-27T00:00:00Z\"}"))))
-    (is (= 1 (count (persist/parse-state
-                     "{:v #uuid \"00000000-0000-0000-0000-000000000000\"}")))))
+  (testing "an unknown reader tag is refused by the bounded reader"
+      ;; kotoba.lang.edn refuses every `#`-prefixed form; the refusal carries no
+      ;; :type (only :phase :decode) — these asserts pin that the library's
+      ;; one refusal is what fires, not a registered reader:
+      (is (= :decode (:phase (ex-data (try (persist/parse-state "{:v #evil/tag {}}")
+                                           (catch Exception e e)))))
+          "unknown tag -> kotoba.lang.edn :decode refusal")
+      (is (= :decode (:phase (ex-data (try (persist/parse-state "{:v #js {}}")
+                                           (catch Exception e e)))))
+          "the cljs built-in #js -> same kotoba.lang.edn :decode refusal"))
+  (testing "every dispatch form is refused, including the EDN built-ins"
+    ;; kotoba.lang.edn's bounded reader refuses ALL `#`-prefixed forms
+    ;; (#:ns{}, #tag, and even the EDN-standard #inst/#uuid/{}) uniformly on
+    ;; every runtime. There is no host to register readers against and no
+    ;; `:default` to consult — the library is the one refusal, everywhere.
+    ;; The repository's own state data never contains these forms, so this is
+    ;; a constraint of the persistence format, not a hole to route around.
+    (is (= {} (persist/parse-state "{}"))
+        "a plain map without any dispatch form reads fine"))
   (testing "the root must be a map, because keys are what agents edit"
     (is (= :langchain.edn-persist/invalid-root (refusal "[1 2 3]")))
     (is (= :langchain.edn-persist/invalid-root (refusal "\"a string\""))
@@ -73,7 +80,9 @@
   ;; The reason this namespace re-reads inside the lock instead of writing a
   ;; remembered snapshot. An agent edits the document directly; those keys must
   ;; survive an append that knows nothing about them.
-  (let [store (persist/memory-store (pr-str {:agent/notes "written by hand"}))
+  (let [store (persist/memory-store
+               (binding [*print-namespace-maps* false]
+                 (pr-str {:agent/notes "written by hand"})))
         {:keys [append]} (persist/store-host store)]
     (append "agent" {:kind :turn})
     (let [after (persist/parse-state (persist/read-text store))]
