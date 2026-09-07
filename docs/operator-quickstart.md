@@ -35,13 +35,28 @@ clojure -M:test
 ```
 
 ```
-Ran 99 tests containing 239 assertions.
+Ran 156 tests containing 543 assertions.
 0 failures, 0 errors.
 ```
 
-14 s on a warm cache. This is the whole suite, `.cljc` and JVM-only alike, and
-it is expected to be fully green — if you are about to change something, run
-this first so you can tell your failures from pre-existing ones.
+This is the whole suite, `.cljc` and JVM-only alike, and it is expected to be
+fully green — if you are about to change something, run this first so you can
+tell your failures from pre-existing ones.
+
+The `.cljc` half has a second gate, and it is not the same run:
+
+```sh
+bin/test-portable-cljs
+```
+
+```
+portable cljc — 40 tests, 249 assertions, 0 failures, 0 errors, on ClojureScript
+```
+
+It needs `nbb` on `PATH` and no `deps.edn` resolution at all. Run it when you
+touch anything under `src/` that is `.cljc` — `langchain.db` included, whose
+contract tests are in both runs and have been confirmed to discriminate in
+both.
 
 ## 3. Run the example offline
 

@@ -131,12 +131,32 @@ must appear.
 ## Tests / example
 
 ```sh
-clojure -M:test                                  # 99 tests, 239 assertions
+clojure -M:test                                  # JVM: 156 tests, 543 assertions
+bin/test-portable-cljs                           # ClojureScript: 40 tests, 249 assertions
 clojure -Sdeps '{:paths ["src" "examples"]}' \
         -M -e "(require 'chain) (chain/-main)"   # offline, mock model
 clojure -Sdeps '{:paths ["src" "examples"]}' \
         -M -e "(require 'live-murakumo) (live-murakumo/-main)"   # real model
 ```
+
+Both counts measured 2026-09-07. `test/langchain/db_contract_test.cljc` holds
+the `langchain.db` invariants the rest of the suite does not discriminate:
+that a `:db.unique/identity` attribute resolves an upsert no matter where in
+the map it was written, that replacing a value records the retraction in
+`:tx-data` so `as-of` can replay it, and that an entity with no unique
+attribute gets a fresh identity instead of merging into an existing one.
+Each was watched go red against a deliberately broken `db.cljc` before it
+landed, and each mutation was first confirmed to leave the previous suite
+entirely green — 153 tests / 535 assertions, once per mutation. The
+mutations live in the superproject's `scripts/maturity-loop/mutations.edn`
+under suite `orgs/kotoba-lang/langchain`.
+
+That namespace is the first db-layer one the ClojureScript runner executes.
+`langchain.db` is `.cljc` and is what `langchain-store` — and through it the
+316 `cloud-itonami` repositories depending on that wrapper — reaches for, but
+until now only the JVM had ever run it. The `:langchain/entity-map-loses-unique-first-ordering`
+mutation was confirmed to go red on both runtimes with the same two
+assertions, so the second runtime is a gate rather than a re-run.
 
 New here? [docs/operator-quickstart.md](docs/operator-quickstart.md) walks the
 five steps in order — resolve deps, test, run offline, call a real model
