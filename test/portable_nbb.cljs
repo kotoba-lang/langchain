@@ -18,6 +18,7 @@
   which is why `langchain.json-test` is absent while message/prompt/tool,
   which depend on nothing beyond `src`, are here."
   (:require [cljs.test :as t]
+            [langchain.db-contract-test]
             [langchain.catalog-test]
             [langchain.edn-persist-portable-test]
             [langchain.message-test]
@@ -31,7 +32,8 @@
   (when-not (t/successful? m)
     (set! (.-exitCode js/process) 1)))
 
-(t/run-tests 'langchain.catalog-test
+(t/run-tests 'langchain.db-contract-test
+             'langchain.catalog-test
              'langchain.edn-persist-portable-test
              'langchain.message-test
              'langchain.prompt-test
