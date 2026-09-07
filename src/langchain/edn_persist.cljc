@@ -74,22 +74,12 @@
   (if (str/blank? (str text))
     {}
     (let [value (edn/read-string
-                 {;; `#js` is built into the ClojureScript EDN reader and would
-                  ;; otherwise never reach `:default` — so the SAME document
-                  ;; parsed on Node and refused on the JVM, which makes the
-                  ;; format host-dependent. Naming the tag explicitly overrides
-                  ;; the built-in and puts both runtimes back on one answer.
-                  ;; Measured 2026-08-27: without this line `{:v #js {}}` reads
-                  ;; to a native object on Node and raises `tagged-edn` on the
-                  ;; JVM. Harmless on the JVM, where there is no such tag.
-                  :readers {'js (fn [_]
-                                  (throw (ex-info "tagged repository EDN denied"
-                                                  {:type :langchain.edn-persist/tagged-edn
-                                                   :tag 'js})))}
-                  :default (fn [tag _]
-                             (throw (ex-info "tagged repository EDN denied"
-                                             {:type :langchain.edn-persist/tagged-edn
-                                              :tag tag})))}
+                 ;; kotoba.lang.edn's bounded reader refuses EVERY `#`-prefixed
+                 ;; dispatch form (#:ns{}, #tag, #inst, #uuid, #{}) uniformly on
+                 ;; all runtimes, so the host-dependence this opts-map used to
+                 ;; guard against is structurally inherited from the library.
+                 ;; The refusal is kotoba.lang.edn/reject!'s own `EDN dispatch
+                 ;; forms are forbidden`, always, on JVM and Node alike.
                  text)]
       (when-not (map? value)
         (throw (ex-info "repository EDN root must be a map"
@@ -100,7 +90,11 @@
   "The bytes-to-be, as text. A trailing newline because this file is edited by
   people and by `git`."
   [value]
-  (str (pr-str value) "\n"))
+  ;; Bind *print-namespace-maps* false so namespaced keywords (:agent/notes)
+  ;; serialize as `{:agent/notes ...}` rather than the `#:agent{...}` dispatch
+  ;; shorthand. kotoba.lang.edn's bounded reader refuses every `#`-prefixed
+  ;; form, and the round-trip must stay dispatch-free.
+  (str (binding [*print-namespace-maps* false] (pr-str value)) "\n"))
 
 (defn append-to-state
   "`[next-state stamped-event]` for one append.
