@@ -23,7 +23,7 @@
     {:http-fn   (fn [{:keys [url method headers body]}] => {:status n :body s})
      :json-write (fn [clj-data] => json-string)
      :json-read  (fn [json-string] => clj-data with keyword keys)}"
-  (:require #?(:clj  [clojure.edn :as edn]
+  (:require #?(:clj  [kotoba.lang.edn :as edn]
                :cljs [cljs.reader :as edn])
             [clojure.string :as str]))
 

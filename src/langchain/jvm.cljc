@@ -17,7 +17,7 @@
   (:require [langchain.model :as model]
             [langchain.message :as msg]
             [clojure.string :as str]
-            #?(:clj [clojure.edn :as edn]
+            #?(:clj [kotoba.lang.edn :as edn]
                :cljs [cljs.reader :as edn])
             #?(:clj [org.httpkit.client :as http])
             #?(:clj [jsonista.core :as j])))
