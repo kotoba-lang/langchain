@@ -16,7 +16,7 @@
   app-specific, injected here as a `build-live` thunk."
   (:require [langchain.model :as model]
             [langchain.message :as msg]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             #?(:clj [kotoba.lang.edn :as edn]
                :cljs [cljs.reader :as edn])
             #?(:clj [org.httpkit.client :as http])

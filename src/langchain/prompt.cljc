@@ -1,7 +1,7 @@
 (ns langchain.prompt
   "Prompt templates. `{var}` placeholders are filled from an input map
   (string or keyword keys). Templates are Runnables."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [langchain.runnable :as r]))
 
 (defn format-template

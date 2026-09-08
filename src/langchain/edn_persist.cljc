@@ -33,7 +33,7 @@
   IndexedDB — implements the same three operations and reuses every line of the
   policy."
   (:require [kotoba.lang.edn :as edn]
-            [clojure.string :as str])
+            [kotoba.lang.text :as str])
   #?(:clj (:import [java.nio.channels FileChannel]
                    [java.nio.charset StandardCharsets]
                    [java.nio.file AtomicMoveNotSupportedException CopyOption Files

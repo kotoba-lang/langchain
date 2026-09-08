@@ -2,7 +2,7 @@
   "Output parsers — Runnables that turn assistant messages into data."
   (:require #?(:clj [kotoba.lang.edn :as edn]
                :cljs [cljs.reader :as edn])
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [langchain.message :as msg]
             [langchain.json :as json]))
 

@@ -25,7 +25,7 @@
      :json-read  (fn [json-string] => clj-data with keyword keys)}"
   (:require #?(:clj  [kotoba.lang.edn :as edn]
                :cljs [cljs.reader :as edn])
-            [clojure.string :as str]))
+            [kotoba.lang.text :as str]))
 
 ;; ─── connection map ───────────────────────────────────────────────────────────
 
