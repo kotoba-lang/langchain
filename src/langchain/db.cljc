@@ -38,7 +38,7 @@
   Not supported (use real Datomic if you need them): rules (%),
   multiple db sources, :db.unique/value conflict errors (treated as
   identity/upsert), d/history."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [clojure.set :as set]))
 
 (declare with)
@@ -343,11 +343,11 @@
    'name name 'namespace namespace 'first first 'second second
    'last last 'vector vector 'list list 'get get 'get-in get-in
    'contains? contains? 'ground identity
-   'clojure.string/starts-with? str/starts-with?
-   'clojure.string/ends-with? str/ends-with?
-   'clojure.string/includes? str/includes?
-   'clojure.string/lower-case str/lower-case
-   'clojure.string/upper-case str/upper-case})
+   'str/starts-with? str/starts-with?
+   'str/ends-with? str/ends-with?
+   'str/includes? str/includes?
+   'str/lower str/lower
+   'str/upper str/upper})
 
 (defn- parse-query [query]
   (if (map? query)

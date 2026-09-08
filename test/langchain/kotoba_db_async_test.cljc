@@ -16,7 +16,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             #?(:clj  [kotoba.lang.edn :as edn]
                :cljs [cljs.reader :as edn])
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             [langchain.kotoba-db :as kdb]))
 
 ;; ─── mock ASYNC host-caps ─────────────────────────────────────────────────────

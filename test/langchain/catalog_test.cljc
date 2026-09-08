@@ -21,7 +21,7 @@
   ask it. Both are invoked from the repository root, which is what the
   relative path below resolves against."
   (:require [clojure.test :refer [deftest is testing]]
-            [clojure.string :as str]
+            [kotoba.lang.text :as str]
             #?(:clj [kotoba.lang.edn :as edn]
                :cljs [cljs.reader :as edn])
             #?(:cljs ["fs" :as fs])))
