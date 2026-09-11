@@ -6,7 +6,7 @@
   double-EDN-encoded cells) while threading every op through a
   promise-like `:http-fn`/return value instead of a plain one.
 
-  Runs on `:clj` (`clojure -M:test`), where `kotoba-db.cljc`'s private
+  Runs on `:clj` (`kbb -M:test`), where `kotoba-db.cljc`'s private
   `p-then` is `(f p)` -- synchronous -- so `mock-async-caps`'s `:http-fn`
   (itself wrapped in `p-resolved`, i.e. identity on `:clj`) makes every
   `(:q api)`/`(:pull api)`/etc. call below return its final projected

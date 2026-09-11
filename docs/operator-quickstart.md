@@ -31,7 +31,7 @@ itself, rather than as a confusing test error.
 ## 2. Run the tests
 
 ```sh
-clojure -M:test
+kbb -M:test
 ```
 
 ```
@@ -61,7 +61,7 @@ both.
 ## 3. Run the example offline
 
 ```sh
-clojure -Sdeps '{:paths ["src" "examples"]}' \
+kbb -Sdeps '{:paths ["src" "examples"]}' \
         -M -e "(require 'chain) (chain/-main)"
 ```
 
@@ -86,7 +86,7 @@ not the library.
 ## 4. Call a real model
 
 ```sh
-clojure -Sdeps '{:paths ["src" "examples"]}' \
+kbb -Sdeps '{:paths ["src" "examples"]}' \
         -M -e "(require 'live-murakumo) (live-murakumo/-main)"
 ```
 
@@ -126,7 +126,7 @@ vLLM, OpenAI itself), set those two variables:
 ```sh
 MURAKUMO_URL=http://localhost:11434/v1/chat/completions \
 MURAKUMO_MODEL=your-model-here \
-clojure -Sdeps '{:paths ["src" "examples"]}' \
+kbb -Sdeps '{:paths ["src" "examples"]}' \
         -M -e "(require 'live-murakumo) (live-murakumo/-main)"
 ```
 
@@ -148,7 +148,7 @@ environment, so run it twice — write in one process, recover in another:
 ```sh
 export KOTOBA_REPOSITORY_STATE_FILE=/tmp/lc-state.edn
 
-clojure -M -e "
+kbb -M -e "
 (require '[langchain.db :as db] '[langchain.memory :as memory]
          '[langchain.message :as msg] '[langchain.edn-persist :as ep])
 (def conn (db/create-conn memory/memory-schema (ep/required-persist-from-env \"chat/main\")))
@@ -156,7 +156,7 @@ clojure -M -e "
 ((:append! hist) \"t1\" (msg/user \"remember me\"))
 (println \"wrote:\" (count ((:messages hist) \"t1\")) \"message(s)\")"
 
-clojure -M -e "
+kbb -M -e "
 (require '[langchain.db :as db] '[langchain.memory :as memory] '[langchain.edn-persist :as ep])
 (def conn (db/create-conn memory/memory-schema (ep/required-persist-from-env \"chat/main\")))
 (def hist (memory/datomic-chat-history conn))
@@ -179,7 +179,7 @@ recovered: [[:user "remember me"]]
 datalog: #{["t1" 1]}
 ```
 
-`clojure -M -e` prints the value of every top-level form, so the `#'user/…`
+`kbb -M -e` prints the value of every top-level form, so the `#'user/…`
 lines and the bare `0` (what `append!` returned) are the runner echoing, not
 output of yours. The lines that matter are the last one of each.
 

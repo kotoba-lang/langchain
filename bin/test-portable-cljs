@@ -1,9 +1,9 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; Run this library's portable namespaces under ClojureScript.
 ;;
 ;;   bin/test-portable-cljs          (from the repository root)
 ;;
-;; The JVM half runs the same namespaces from `clojure -M:test`. This half is
+;; The JVM half runs the same namespaces from `kbb -M:test`. This half is
 ;; what makes the `.cljc` extension mean something: without it the JVM is the
 ;; only runtime that has ever executed them, and this library is almost
 ;; entirely `.cljc`.
