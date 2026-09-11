@@ -17,7 +17,7 @@
   recorded measurement, not a live one. What IS checked live is
   everything this repo can answer about itself.
 
-  Written as .cljc and listed in test/portable_nbb.cljs so both runtimes
+  Written as .cljc and listed in test/portable_nbb.cljk so both runtimes
   ask it. Both are invoked from the repository root, which is what the
   relative path below resolves against."
   (:require [clojure.test :refer [deftest is testing]]
@@ -85,16 +85,16 @@
   ;; this workspace's own designs, not ports, and demanding a citation for
   ;; them would be demanding a fabricated one.
   (let [cited (set (mapcat :mirrors (:catalog/sources (catalog))))]
-    (doseq [f ["src/langchain/runnable.cljc"
-               "src/langchain/message.cljc"
-               "src/langchain/prompt.cljc"
-               "src/langchain/model.cljc"
-               "src/langchain/tool.cljc"
-               "src/langchain/parser.cljc"
-               "src/langchain/memory.cljc"
-               "src/langchain/db.cljc"
-               "src/langchain/kotoba_db.cljc"
-               "src/langchain/json.cljc"]]
+    (doseq [f ["src/langchain/runnable.cljk"
+               "src/langchain/message.cljk"
+               "src/langchain/prompt.cljk"
+               "src/langchain/model.cljk"
+               "src/langchain/tool.cljk"
+               "src/langchain/parser.cljk"
+               "src/langchain/memory.cljk"
+               "src/langchain/db.cljk"
+               "src/langchain/kotoba_db.cljk"
+               "src/langchain/json.cljk"]]
       (testing f
         (is (contains? cited f)
             "this namespace is a port of something upstream, so the catalog owes it an address")))))

@@ -123,7 +123,7 @@ That table names upstream constructs; [docs/catalog.edn](docs/catalog.edn)
 gives each of them an address — the document that was actually fetched, its
 final status and the date, next to the file here that mirrors it. It also
 covers the wire formats and the Datomic API this library reimplements, which
-the table does not. `test/langchain/catalog_test.cljc` keeps it honest: every
+the table does not. `test/langchain/catalog_test.cljk` keeps it honest: every
 row must carry a successful fetch and a date, every `:mirrors` path must
 exist, URLs must be distinct, and every namespace that is a port of something
 must appear.
@@ -139,7 +139,7 @@ clojure -Sdeps '{:paths ["src" "examples"]}' \
         -M -e "(require 'live-murakumo) (live-murakumo/-main)"   # real model
 ```
 
-Both counts measured 2026-09-07. `test/langchain/db_contract_test.cljc` holds
+Both counts measured 2026-09-07. `test/langchain/db_contract_test.cljk` holds
 the `langchain.db` invariants the rest of the suite does not discriminate:
 that a `:db.unique/identity` attribute resolves an upsert no matter where in
 the map it was written, that replacing a value records the retraction in

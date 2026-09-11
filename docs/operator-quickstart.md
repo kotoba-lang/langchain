@@ -96,7 +96,7 @@ reply: "Bonjour"
 OK
 ```
 
-This is the step worth reading the source of (`examples/live_murakumo.clj`,
+This is the step worth reading the source of (`examples/live_murakumo.cljk`,
 ~120 lines). langchain performs no I/O itself, so everything host-shaped is
 injected there and nowhere in the library:
 

@@ -9,7 +9,7 @@
   order, null becoming nil, and the defaults actually being these two
   functions -- were unpinned.
 
-  Not listed in test/portable_nbb.cljs: that runner deliberately takes no
+  Not listed in test/portable_nbb.cljk: that runner deliberately takes no
   classpath beyond src:test, and this namespace's dependency lives outside
   both. The exclusion is about the classpath, not about portability."
   (:require [clojure.test :refer [deftest is testing]]
