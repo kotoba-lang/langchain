@@ -131,11 +131,11 @@ must appear.
 ## Tests / example
 
 ```sh
-clojure -M:test                                  # JVM: 156 tests, 543 assertions
+kbb -M:test                                  # JVM: 156 tests, 543 assertions
 bin/test-portable-cljs                           # ClojureScript: 40 tests, 249 assertions
-clojure -Sdeps '{:paths ["src" "examples"]}' \
+kbb -Sdeps '{:paths ["src" "examples"]}' \
         -M -e "(require 'chain) (chain/-main)"   # offline, mock model
-clojure -Sdeps '{:paths ["src" "examples"]}' \
+kbb -Sdeps '{:paths ["src" "examples"]}' \
         -M -e "(require 'live-murakumo) (live-murakumo/-main)"   # real model
 ```
 

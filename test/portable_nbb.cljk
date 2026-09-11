@@ -1,7 +1,7 @@
 (ns portable-nbb
   "The ClojureScript half of this library's test suite.
 
-  `clojure -M:test` runs every namespace here on the JVM. Until this file
+  `kbb -M:test` runs every namespace here on the JVM. Until this file
   existed, that was the ONLY runtime that had ever executed them — and most of
   this library is `.cljc`, so the extension was claiming a portability nothing
   checked. A `.cljc` file one runtime ever runs is a `.clj` file with a longer

@@ -2,7 +2,7 @@
   "The same LCEL chain as `chain`, but against a real model, to prove the
   injected-I/O seam end to end:
 
-     clojure -Sdeps '{:paths [\"src\" \"examples\"]}' \\
+     kbb -Sdeps '{:paths [\"src\" \"examples\"]}' \\
              -M -e \"(require 'live-murakumo) (live-murakumo/-main)\"
 
   langchain does no I/O of its own (ADR-0001). Everything host-shaped is
