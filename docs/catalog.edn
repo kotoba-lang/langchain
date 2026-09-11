@@ -10,7 +10,7 @@
 ;; the port still matches its source, and could not tell an intentional
 ;; divergence from a stale one.
 ;;
-;; Discipline (enforced by test/langchain/catalog_test.cljc):
+;; Discipline (enforced by test/langchain/catalog_test.cljk):
 ;;   - :url was fetched on :verified and the FINAL response was :http.
 ;;     Redirects are resolved: a source is recorded at its terminal
 ;;     address, not at the historical one that still points there.
@@ -40,7 +40,7 @@
    :http 200 :verified "2026-09-01"}
 
   {:subject "langchain OSS Python overview — the single page the former LCEL, Runnable, prompt-template, tool-calling, output-parser and chat-history concept pages now all redirect into"
-   :mirrors ["src/langchain/runnable.cljc" "src/langchain/prompt.cljc" "docs/adr/0001-architecture.md"]
+   :mirrors ["src/langchain/runnable.cljk" "src/langchain/prompt.cljk" "docs/adr/0001-architecture.md"]
    :url "https://docs.langchain.com/oss/python/langchain/overview"
    :http 200 :verified "2026-09-01"}
 
@@ -50,86 +50,86 @@
    :http 200 :verified "2026-09-01"}
 
   {:subject "chat model interface: the invoke/bind_tools surface langchain.model's protocol mirrors"
-   :mirrors ["src/langchain/model.cljc"]
+   :mirrors ["src/langchain/model.cljk"]
    :url "https://docs.langchain.com/oss/python/langchain/models"
    :http 200 :verified "2026-09-01"}
 
   {:subject "message data model: human / ai / system / tool roles and content blocks"
-   :mirrors ["src/langchain/message.cljc"]
+   :mirrors ["src/langchain/message.cljk"]
    :url "https://docs.langchain.com/oss/python/langchain/messages"
    :http 200 :verified "2026-09-01"}
 
   {:subject "tool definition and tool calling: the name/description/schema triple langchain.tool carries as a plain map"
-   :mirrors ["src/langchain/tool.cljc"]
+   :mirrors ["src/langchain/tool.cljk"]
    :url "https://docs.langchain.com/oss/python/langchain/tools"
    :http 200 :verified "2026-09-01"}
 
   {:subject "short-term memory / chat history: the per-thread transcript langchain.memory holds as datoms instead of an object"
-   :mirrors ["src/langchain/memory.cljc"]
+   :mirrors ["src/langchain/memory.cljk"]
    :url "https://docs.langchain.com/oss/python/langchain/short-term-memory"
    :http 200 :verified "2026-09-01"}
 
   {:subject "structured output: the parse-the-model's-text step langchain.parser implements as str / edn / json parsers"
-   :mirrors ["src/langchain/parser.cljc"]
+   :mirrors ["src/langchain/parser.cljk"]
    :url "https://docs.langchain.com/oss/python/langchain/structured-output"
    :http 200 :verified "2026-09-01"}
 
   {:subject "streaming: chunk-sequence semantics — this repo implements stream as a chunk seq and NOT token-level streaming (ADR-0001 non-scope)"
-   :mirrors ["src/langchain/runnable.cljc" "src/langchain/model.cljc"]
+   :mirrors ["src/langchain/runnable.cljk" "src/langchain/model.cljk"]
    :url "https://docs.langchain.com/oss/python/langchain/streaming"
    :http 200 :verified "2026-09-01"}
 
   {:subject "Anthropic Messages API wire format: the request/response shape langchain.model/request-body and parse-response encode and decode"
-   :mirrors ["src/langchain/model.cljc" "test/langchain/chain_test.cljc"]
+   :mirrors ["src/langchain/model.cljk" "test/langchain/chain_test.cljk"]
    :url "https://platform.claude.com/docs/en/api/messages"
    :http 200 :verified "2026-09-01"}
 
   {:subject "Anthropic tool-use wire format: input_schema, tool_use and tool_result content blocks"
-   :mirrors ["src/langchain/tool.cljc" "src/langchain/model.cljc"]
+   :mirrors ["src/langchain/tool.cljk" "src/langchain/model.cljk"]
    :url "https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview"
    :http 200 :verified "2026-09-01"}
 
   {:subject "OpenAI-compatible chat completions as served by Ollama — the endpoint README's openai-model example points at for local models"
-   :mirrors ["src/langchain/model.cljc" "test/langchain/openai_model_test.cljc" "README.md"]
+   :mirrors ["src/langchain/model.cljk" "test/langchain/openai_model_test.cljk" "README.md"]
    :url "https://ollama.com/blog/openai-compatibility"
    :http 200 :verified "2026-09-01"}
 
   {:subject "Gemini's OpenAI-compatible endpoint — the second vendor behind the same openai-model adapter, which is why the adapter is named for the wire format and not for a vendor"
-   :mirrors ["src/langchain/model.cljc"]
+   :mirrors ["src/langchain/model.cljk"]
    :url "https://ai.google.dev/gemini-api/docs/openai"
    :http 200 :verified "2026-09-01"}
 
   {:subject "Datomic documentation root — the API langchain.db reimplements a minimal, swappable subset of (ADR-0001 decision 3)"
-   :mirrors ["src/langchain/db.cljc" "docs/adr/0001-architecture.md"]
+   :mirrors ["src/langchain/db.cljk" "docs/adr/0001-architecture.md"]
    :url "https://docs.datomic.com/"
    :http 200 :verified "2026-09-01"}
 
   {:subject "Datomic query (Datalog) reference: the :find / :in / :where grammar langchain.db/q accepts"
-   :mirrors ["src/langchain/db.cljc" "test/langchain/db_test.cljc"]
+   :mirrors ["src/langchain/db.cljk" "test/langchain/db_test.cljk"]
    :url "https://docs.datomic.com/query/query-data-reference.html"
    :http 200 :verified "2026-09-01"}
 
   {:subject "Datomic pull reference: the pattern grammar langchain.db/pull accepts"
-   :mirrors ["src/langchain/db.cljc"]
+   :mirrors ["src/langchain/db.cljk"]
    :url "https://docs.datomic.com/query/query-pull.html"
    :http 200 :verified "2026-09-01"}
 
   {:subject "Datomic transaction data reference: upsert, lookup refs and cardinality-many — the three transaction behaviours langchain.db implements and langchain.memory depends on"
-   :mirrors ["src/langchain/db.cljc" "src/langchain/memory.cljc"]
+   :mirrors ["src/langchain/db.cljk" "src/langchain/memory.cljk"]
    :url "https://docs.datomic.com/transactions/transaction-data-reference.html"
    :http 200 :verified "2026-09-01"}
 
   {:subject "Datomic schema reference: the :db/valueType, :db/cardinality and :db/unique attributes memory-schema declares"
-   :mirrors ["src/langchain/db.cljc" "src/langchain/memory.cljc"]
+   :mirrors ["src/langchain/db.cljk" "src/langchain/memory.cljk"]
    :url "https://docs.datomic.com/schema/schema-reference.html"
    :http 200 :verified "2026-09-01"}
 
   {:subject "RFC 8259 — the JSON grammar the injected json-read / json-write seam is expected to honour, and against which the sibling kotoba-lang/json validates numbers before parsing"
-   :mirrors ["src/langchain/json.cljc" "src/langchain/parser.cljc" "deps.edn"]
+   :mirrors ["src/langchain/json.cljk" "src/langchain/parser.cljk" "deps.edn"]
    :url "https://www.rfc-editor.org/rfc/rfc8259.txt"
    :http 200 :verified "2026-09-01"}
 
   {:subject "AT Protocol XRPC — the NSID-addressed HTTP shape langchain.kotoba-db speaks when it talks to kotoba-server (ai.gftd.apps.kotobase.datomic.*)"
-   :mirrors ["src/langchain/kotoba_db.cljc" "docs/adr/0001-architecture.md"]
+   :mirrors ["src/langchain/kotoba_db.cljk" "docs/adr/0001-architecture.md"]
    :url "https://atproto.com/specs/xrpc"
    :http 200 :verified "2026-09-01"}]}
