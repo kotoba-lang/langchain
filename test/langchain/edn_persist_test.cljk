@@ -1,12 +1,18 @@
 (ns langchain.edn-persist-test
-  (:require [kotoba.lang.edn :as edn]
-            [clojure.java.io :as io]
+  ;; JVM-only: the filesystem host (temp directories, a real lock, concurrent
+  ;; JVM threads) is a JVM fact. On the kbb engine (`kbb -M:test`, SCI on
+  ;; Node) this namespace loads and defines no tests; what is left when the
+  ;; host is taken away runs everywhere in `langchain.edn-persist-portable-test`.
+  (:require #?@(:clj [[kotoba.lang.edn :as edn]
+                      [clojure.java.io :as io]])
             [clojure.test :refer [deftest is testing]]
             [langchain.db :as db]
             [langchain.edn-persist :as ep]
             [langchain.persist :as persist])
-  (:import [java.nio.file Files]
-           [java.nio.file.attribute FileAttribute]))
+  #?(:clj (:import [java.nio.file Files]
+                   [java.nio.file.attribute FileAttribute])))
+
+#?(:clj (do
 
 (def schema {:person/id {:db/unique :db.unique/identity}})
 
@@ -81,3 +87,4 @@
       (is (= 40 (count events)))
       (is (= (vec (range 1 41)) (mapv :seq events)))
       (is (= (set (range 40)) (set (map :n events)))))))
+))

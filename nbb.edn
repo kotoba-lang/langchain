@@ -1,0 +1,17 @@
+;; nbb reads this file. It does NOT read deps.edn, and `kbb -M:test` runs
+;; this repo's suite on the kbb engine (SCI on Node), which resolves only
+;; :local/root from deps.edn -- every git coordinate below was invisible to
+;; it, and the suite died at `Could not find namespace: kotoba.lang.text`
+;; before a single test ran (measured 2026-09-24).
+;;
+;; :paths and every sha below are COPIED from deps.edn, not chosen here.
+;; kotobase comes from deps.edn's :test alias (langchain.kotobase-persist-test);
+;; nbb.edn has no aliases, and nothing under src/ requires it.
+{:paths ["src"]
+ :deps {io.github.kotoba-lang/text {:git/sha "73bdb13ae7a3d004b44bca08be03a3191157a38f"}
+        io.github.kotoba-lang/json {:git/sha "15fd195ac41e6268e2005ccbf6cb9924e81e65e2"}
+        io.github.kotoba-lang/edn
+        {:git/url "https://github.com/kotoba-lang/edn.git"
+         :git/sha "250f4dafa5f5c7fb3109703496a52866e2a62dcd"}
+        io.github.kotoba-lang/kotobase
+        {:git/sha "96dbdaeb27c67d9ede2be01e8b737f52938e2590"}}}
