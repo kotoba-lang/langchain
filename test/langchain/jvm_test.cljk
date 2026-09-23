@@ -17,14 +17,19 @@
           m (llm/chat-model "test-model" (fn [] live-marker))]
       (is (= live-marker m)))))
 
-(deftest parse-structured-json
-  (is (= {:a 1} (llm/parse-structured "{\"a\": 1}"))))
+;; JSON is parsed only on :clj (jsonista); langchain.jvm answers nil for JSON
+;; on :cljs by construction (`:cljs nil` in parse-structured), so these two
+;; hold on the JVM only. The EDN and non-map cases run everywhere.
+#?(:clj
+   (deftest parse-structured-json
+     (is (= {:a 1} (llm/parse-structured "{\"a\": 1}")))))
 
 (deftest parse-structured-edn
   (is (= {:a 1} (llm/parse-structured "{:a 1}"))))
 
-(deftest parse-structured-strips-fences
-  (is (= {:a 1} (llm/parse-structured "```json\n{\"a\": 1}\n```"))))
+#?(:clj
+   (deftest parse-structured-strips-fences
+     (is (= {:a 1} (llm/parse-structured "```json\n{\"a\": 1}\n```")))))
 
 (deftest parse-structured-nil-on-non-map
   (is (nil? (llm/parse-structured "not a map at all"))))

@@ -6,7 +6,7 @@
   double-EDN-encoded cells) while threading every op through a
   promise-like `:http-fn`/return value instead of a plain one.
 
-  Runs on `:clj` (`kbb -M:test`), where `kotoba-db.cljc`'s private
+  JVM-only. It asserts on `:clj`, where `kotoba-db.cljc`'s private
   `p-then` is `(f p)` -- synchronous -- so `mock-async-caps`'s `:http-fn`
   (itself wrapped in `p-resolved`, i.e. identity on `:clj`) makes every
   `(:q api)`/`(:pull api)`/etc. call below return its final projected
@@ -18,6 +18,13 @@
                :cljs [cljs.reader :as edn])
             [kotoba.lang.text :as str]
             [langchain.kotoba-db :as kdb]))
+
+;; Not on the kbb engine: `kbb -M:test` runs this suite as `:cljs` (SCI on
+;; Node), where every `(:q api)` below returns a `js/Promise` and each `is`
+;; would compare against the promise, not its value (13 of 18 failed so,
+;; 2026-09-24). Covering the `:cljs` branch needs `cljs.test/async` tests,
+;; which this file does not have yet.
+#?(:clj (do
 
 ;; ─── mock ASYNC host-caps ─────────────────────────────────────────────────────
 
@@ -344,3 +351,4 @@
       ((:transact! (kdb/kotoba-api sync-caps)) test-conn tx-data)
       ((:transact! (kdb/kotoba-api-async async-caps)) test-conn tx-data)
       (is (= (:body (first @sync-captured)) (:body (first @async-captured)))))))
+))

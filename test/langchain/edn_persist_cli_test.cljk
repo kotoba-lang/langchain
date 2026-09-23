@@ -1,9 +1,14 @@
 (ns langchain.edn-persist-cli-test
-  (:require [clojure.java.io :as io]
-            [clojure.test :refer [deftest is]]
-            [langchain.edn-persist-cli :as cli])
-  (:import [java.nio.file Files]
-           [java.nio.file.attribute FileAttribute]))
+  ;; JVM-only: the bridge is a JVM process (`:gen-class`, `System/exit`) over
+  ;; the filesystem host. On the kbb engine (`kbb -M:test`, SCI on Node) this
+  ;; namespace loads and defines no tests.
+  (:require [clojure.test :refer [deftest is]]
+            #?@(:clj [[clojure.java.io :as io]
+                      [langchain.edn-persist-cli :as cli]]))
+  #?(:clj (:import [java.nio.file Files]
+                   [java.nio.file.attribute FileAttribute])))
+
+#?(:clj (do
 
 (deftest non-clojure-bridge-round-trips-json-without-owning-edn
   (let [dir (.toFile (Files/createTempDirectory
@@ -17,3 +22,4 @@
     (is (= {"op" "state/put" "state" {"mass" 4 "tick" 2} :seq 2}
            (cli/execute "latest" file "organism/did-1" "")))
     (is (= 2 (count (cli/execute "read" file "organism/did-1" ""))))))
+))

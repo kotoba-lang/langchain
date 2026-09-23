@@ -38,10 +38,10 @@
       ;; :type (only :phase :decode) — these asserts pin that the library's
       ;; one refusal is what fires, not a registered reader:
       (is (= :decode (:phase (ex-data (try (persist/parse-state "{:v #evil/tag {}}")
-                                           (catch Exception e e)))))
+                                           (catch #?(:clj Exception :cljs :default) e e)))))
           "unknown tag -> kotoba.lang.edn :decode refusal")
       (is (= :decode (:phase (ex-data (try (persist/parse-state "{:v #js {}}")
-                                           (catch Exception e e)))))
+                                           (catch #?(:clj Exception :cljs :default) e e)))))
           "the cljs built-in #js -> same kotoba.lang.edn :decode refusal"))
   (testing "every dispatch form is refused, including the EDN built-ins"
     ;; kotoba.lang.edn's bounded reader refuses ALL `#`-prefixed forms
