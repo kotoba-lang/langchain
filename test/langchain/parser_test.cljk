@@ -1,5 +1,5 @@
 (ns langchain.parser-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [langchain.parser :as parser]
             [langchain.message :as msg]
             [langchain.json :as json]))

@@ -9,7 +9,7 @@
   second conversation exists -- which is the only state a chat history is
   ever in outside a test. So each test here keeps two threads alive and
   asserts about both: the one under test, and the one that must not move."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [langchain.db :as db]
             [langchain.memory :as memory]
             [langchain.message :as msg]))
