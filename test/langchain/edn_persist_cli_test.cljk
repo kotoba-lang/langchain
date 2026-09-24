@@ -3,7 +3,7 @@
   ;; the filesystem host. On the kbb engine (`kbb -M:test`, SCI on Node) this
   ;; namespace loads and defines no tests.
   (:require [kotoba.test :refer [deftest is]]
-            #?@(:clj [[clojure.java.io :as io]
+            #?@(:clj [[kotoba.io :as io]
                       [langchain.edn-persist-cli :as cli]]))
   #?(:clj (:import [java.nio.file Files]
                    [java.nio.file.attribute FileAttribute])))
