@@ -5,7 +5,7 @@
   into caller code, and where a thrown exception has to become a message
   the model can read instead of a crash that ends the loop. Two other test
   namespaces used it to build fixtures; none pinned that contract."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [langchain.tool :as tool]))
 
 (def ^:private echo

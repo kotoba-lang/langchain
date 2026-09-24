@@ -2,7 +2,7 @@
   ;; JVM-only: the bridge is a JVM process (`:gen-class`, `System/exit`) over
   ;; the filesystem host. On the kbb engine (`kbb -M:test`, SCI on Node) this
   ;; namespace loads and defines no tests.
-  (:require [clojure.test :refer [deftest is]]
+  (:require [kotoba.test :refer [deftest is]]
             #?@(:clj [[clojure.java.io :as io]
                       [langchain.edn-persist-cli :as cli]]))
   #?(:clj (:import [java.nio.file Files]

@@ -1,5 +1,5 @@
 (ns langchain.runnable-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [langchain.runnable :as r]
             [langchain.prompt :as prompt]
             [langchain.parser :as parser]

@@ -1,5 +1,5 @@
 (ns langchain.repo-profile-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [langchain.repo-profile :as profile]))
 
 (deftest supported-repositories-inherit-one-private-state-boundary

@@ -1,5 +1,5 @@
 (ns langchain.kotobase-persist-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotobase.local :as local]
             [langchain.db :as db]
             [langchain.kotobase-persist :as kp]))

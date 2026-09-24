@@ -8,7 +8,7 @@
   that an empty tool-call list reads as nil, and that content blocks are
   readable whether their keys survived a JSON round-trip as keywords or
   as strings."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [langchain.message :as msg]))
 
 (deftest constructors-set-the-role

@@ -20,7 +20,7 @@
   Written as .cljc and listed in test/portable_nbb.cljk so both runtimes
   ask it. Both are invoked from the repository root, which is what the
   relative path below resolves against."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [kotoba.lang.text :as str]
             #?(:clj [kotoba.lang.edn :as edn]
                :cljs [cljs.reader :as edn])

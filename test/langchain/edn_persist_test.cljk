@@ -5,7 +5,7 @@
   ;; host is taken away runs everywhere in `langchain.edn-persist-portable-test`.
   (:require #?@(:clj [[kotoba.lang.edn :as edn]
                       [clojure.java.io :as io]])
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [langchain.db :as db]
             [langchain.edn-persist :as ep]
             [langchain.persist :as persist])

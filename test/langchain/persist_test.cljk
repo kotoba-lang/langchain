@@ -1,5 +1,5 @@
 (ns langchain.persist-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [langchain.db :as db]
             [langchain.persist :as persist]))
 

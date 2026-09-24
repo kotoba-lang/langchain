@@ -6,7 +6,7 @@
   which key styles resolve, what happens to a variable that is not there,
   and that both template records really do satisfy IRunnable rather than
   merely being called as functions."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [langchain.prompt :as prompt]
             [langchain.runnable :as r]))
 

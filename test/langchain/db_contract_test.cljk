@@ -22,7 +22,7 @@
   assertions, 0 failures, once per mutation. A test whose mutation the old
   suite already caught is not closing a gap, and saying which is the point
   of writing them down."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [langchain.db :as db]))
 
 (def ^:private schema

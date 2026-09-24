@@ -9,7 +9,7 @@
   The `memory-store` here is not a mock. It is the implementation this library
   ships for a standalone run, so these assertions exercise shipped code rather
   than a stand-in written for the test."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [langchain.edn-persist :as persist]
             [langchain.persist :as scoped]))
 

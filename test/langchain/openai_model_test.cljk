@@ -1,5 +1,5 @@
 (ns langchain.openai-model-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [langchain.model :as model]
             [langchain.tool :as tool]))
 

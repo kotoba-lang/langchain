@@ -5,7 +5,7 @@
   the decision: every itonami actor reaches inference through
   `anthropic-model`, so `:url`'s `:or` value is the workspace's real answer to
   `where does inference go`."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [langchain.model :as model]))
 
 (defn- capture
