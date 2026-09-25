@@ -60,3 +60,66 @@
   (testing "edn parser strips fences"
     (is (= {:a 1}
            ((parser/edn-parser) (msg/ai "```edn\n{:a 1}\n```"))))))
+
+;; ── the combinators' contracts that the happy-path tests above never touch ──
+;; Each of these was green with the combinator broken: retry that ignores
+;; retry?, one attempt too many, a fallback chain that keeps going after a
+;; success or rethrows the first error, a branch that lets a later predicate
+;; win, a pipe that drops opts, a stream that runs the last step twice.
+
+(defrecord ^:private OptsProbe []
+  r/IRunnable
+  (-invoke [_ input opts] [input (:tag opts)])
+  (-stream [_ input opts] [[:chunk input (:tag opts)] [:end]]))
+
+(deftest retry-respects-its-predicate
+  (let [calls (atom 0)
+        fatal (fn [_] (swap! calls inc) (throw (ex-info "fatal" {:retry false})))
+        r     (r/with-retry fatal {:max-attempts 5
+                                   :retry? #(:retry (ex-data %))})]
+    (is (= "fatal" (try (r/invoke r nil) nil
+                        (catch #?(:clj Exception :cljs :default) e (ex-message e)))))
+    (is (= 1 @calls) "a non-retryable error is thrown on the first attempt")))
+
+(deftest retry-makes-exactly-max-attempts
+  (let [calls  (atom 0)
+        always (fn [_] (throw (ex-info (str "boom " (swap! calls inc)) {})))]
+    (is (= "boom 2" (try (r/invoke (r/with-retry always {:max-attempts 2}) nil) nil
+                         (catch #?(:clj Exception :cljs :default) e (ex-message e))))
+        "the error thrown is the last attempt's")
+    (is (= 2 @calls))))
+
+(deftest fallbacks-stop-at-the-first-success-and-rethrow-the-last-error
+  (testing "a fallback after the one that answered is never run"
+    (let [ran (atom [])
+          bad (fn [_] (swap! ran conj :bad) (throw (ex-info "down" {})))
+          ok  (fn [_] (swap! ran conj :ok) 42)
+          nope (fn [_] (swap! ran conj :nope) 0)]
+      (is (= 42 (r/invoke (r/with-fallbacks bad ok nope) nil)))
+      (is (= [:bad :ok] @ran))))
+  (testing "when every candidate fails, the last one's error surfaces"
+    (let [f (fn [m] (fn [_] (throw (ex-info m {}))))]
+      (is (= "third"
+             (try (r/invoke (r/with-fallbacks (f "first") (f "second") (f "third")) nil) nil
+                  (catch #?(:clj Exception :cljs :default) e (ex-message e))))))))
+
+(deftest branch-first-matching-predicate-wins
+  (let [b (r/branch [pos? (constantly :positive)]
+                    [odd? (constantly :odd)]
+                    (constantly :other))]
+    (is (= :positive (r/invoke b 3)) "3 matches both; the earlier branch answers")
+    (is (= :odd (r/invoke b -3)))
+    (is (= :other (r/invoke b -2)))))
+
+(deftest opts-reach-every-step
+  (is (= [[1 :t] :t]
+         (r/invoke (r/pipe inc (->OptsProbe) (->OptsProbe)) 0 {:tag :t})))
+  (is (= [[2 :t]] (r/batch (->OptsProbe) [2] {:tag :t}))))
+
+(deftest stream-runs-the-prefix-then-streams-the-last-step
+  (let [calls (atom 0)
+        counted (fn [x] (swap! calls inc) (* 10 x))]
+    (is (= [[:chunk 20 :t] [:end]]
+           (vec (r/stream (r/pipe inc counted (->OptsProbe)) 1 {:tag :t}))))
+    (is (= 1 @calls) "each prefix step runs once"))
+  (is (= [7] (vec (r/stream inc 6))) "a plain fn streams as one chunk"))
