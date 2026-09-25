@@ -32,10 +32,9 @@
   A host that is not a filesystem — a Worker with a KV binding, a browser with
   IndexedDB — implements the same three operations and reuses every line of the
   policy."
-  (:require [kotoba.lang.edn :as edn]
+  (:require [kotoba.bytes :as kbytes] [kotoba.lang.edn :as edn]
             [kotoba.lang.text :as str])
   #?(:clj (:import [java.nio.channels FileChannel]
-                   [java.nio.charset StandardCharsets]
                    [java.nio.file AtomicMoveNotSupportedException CopyOption Files
                     OpenOption StandardCopyOption StandardOpenOption])))
 
@@ -202,7 +201,7 @@
            tmp (.toFile (Files/createTempFile
                          (.toPath parent) ".state-" ".edn"
                          (make-array java.nio.file.attribute.FileAttribute 0)))
-           bytes (.getBytes ^String text StandardCharsets/UTF_8)]
+           bytes (kbytes/utf8-bytes ^String text)]
        (try
          (Files/write (.toPath tmp) bytes
                       (into-array OpenOption [StandardOpenOption/WRITE

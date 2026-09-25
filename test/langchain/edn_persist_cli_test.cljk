@@ -2,18 +2,15 @@
   ;; JVM-only: the bridge is a JVM process (`:gen-class`, `System/exit`) over
   ;; the filesystem host. On the kbb engine (`kbb -M:test`, SCI on Node) this
   ;; namespace loads and defines no tests.
-  (:require [kotoba.test :refer [deftest is]]
+  (:require [kotoba.io :as kio] [kotoba.test :refer [deftest is]]
             #?@(:clj [[kotoba.io :as io]
-                      [langchain.edn-persist-cli :as cli]]))
-  #?(:clj (:import [java.nio.file Files]
-                   [java.nio.file.attribute FileAttribute])))
+                      [langchain.edn-persist-cli :as cli]])))
 
 #?(:clj (do
 
 (deftest non-clojure-bridge-round-trips-json-without-owning-edn
-  (let [dir (.toFile (Files/createTempDirectory
-                      "langchain-edn-bridge-"
-                      (make-array FileAttribute 0)))
+  (let [dir (kio/temp-dir
+                      "langchain-edn-bridge-")
         file (io/file dir "state.edn")]
     (cli/execute "append" file "organism/did-1"
                  "{\"op\":\"state/put\",\"state\":{\"mass\":3,\"tick\":1}}")
