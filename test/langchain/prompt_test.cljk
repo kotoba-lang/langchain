@@ -28,7 +28,7 @@
 (deftest format-template-throws-naming-the-missing-variable
   (let [e (try (prompt/format-template "{nope}" {})
                nil
-               (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e e))]
+               (catch :default e e))]
     (is (some? e) "a missing variable must not silently render as empty")
     ;; the name travels in ex-data so a caller can say WHICH variable
     ;; was missing rather than just that one was

@@ -3,23 +3,20 @@
   ;; JVM threads) is a JVM fact. On the kbb engine (`kbb -M:test`, SCI on
   ;; Node) this namespace loads and defines no tests; what is left when the
   ;; host is taken away runs everywhere in `langchain.edn-persist-portable-test`.
-  (:require #?@(:clj [[kotoba.lang.edn :as edn]
+  (:require [kotoba.io :as kio] #?@(:clj [[kotoba.lang.edn :as edn]
                       [clojure.java.io :as io]])
             [kotoba.test :refer [deftest is testing]]
             [langchain.db :as db]
             [langchain.edn-persist :as ep]
-            [langchain.persist :as persist])
-  #?(:clj (:import [java.nio.file Files]
-                   [java.nio.file.attribute FileAttribute])))
+            [langchain.persist :as persist]))
 
 #?(:clj (do
 
 (def schema {:person/id {:db/unique :db.unique/identity}})
 
 (defn- temp-state-file []
-  (io/file (.toFile (Files/createTempDirectory
-                     "langchain-edn-persist-"
-                     (make-array FileAttribute 0)))
+  (io/file (kio/temp-dir
+                     "langchain-edn-persist-")
            "state.edn"))
 
 (deftest editable-edn-persists-and-replays
