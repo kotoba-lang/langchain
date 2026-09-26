@@ -52,7 +52,7 @@
                         :where [?t :thread/id ?tid]
                                [?m :msg/thread ?t]
                                [?m :msg/idx ?i]
-                               [?m :msg/data ?data]]
+                               [?m :msg/content ?data]]
                       dbv thread-id)]
           (->> rows (sort-by first) (mapv (comp edn/read-string second)))))
       :clear!
