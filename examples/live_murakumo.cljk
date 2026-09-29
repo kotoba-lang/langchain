@@ -15,7 +15,7 @@
                   so the keywordize step is required, not cosmetic)
 
   The model id is resolved from the `murakumo-main` KV alias at run time and
-  is deliberately not hardcoded: CLAUDE.md forbids baking a concrete model id
+  is deliberately not hardcoded: AGENTS.md forbids baking a concrete model id
   into anything, because fleet main gets swapped by rewriting that one entry.
   Resolution order is env override -> alias -> endpoint-only fallback."
   (:require [langchain.runnable :as r]
