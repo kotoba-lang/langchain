@@ -1,7 +1,8 @@
 # langchain-clj
 
 LangChain-core-style LLM foundation layer in **portable Clojure** —
-zero dependencies, every namespace is `.cljc`, designed to run on
+no third-party dependencies (only kotoba-lang standard libraries), every
+namespace is `.cljk` (renamed from `.cljc` on 2026-09-11), designed to run on
 **Clojure-on-WASM hosts** (SCI, ClojureScript, GraalVM, kotoba-clj) as
 well as the JVM, with all state persisted through a **Datomic API**.
 
@@ -12,16 +13,16 @@ langgraph.
 
 ```
 src/langchain/
-  runnable.cljc    LCEL Runnables: pipe / parallel / branch / retry / fallbacks
-  message.cljc     chat message data model (Anthropic-shaped maps)
-  prompt.cljc      {var} templates, chat templates, placeholders
-  model.cljc       ChatModel protocol, mock model, Anthropic + OpenAI-compatible
+  runnable.cljk    LCEL Runnables: pipe / parallel / branch / retry / fallbacks
+  message.cljk     chat message data model (Anthropic-shaped maps)
+  prompt.cljk      {var} templates, chat templates, placeholders
+  model.cljk       ChatModel protocol, mock model, Anthropic + OpenAI-compatible
                    adapters (OpenAI / Ollama / Gemini; I/O injected)
-  tool.cljc        tool definitions + execution + wire-format conversion
-  parser.cljc      str / edn / json output parsers
-  memory.cljc      chat history as datoms
-  db.cljc          Datomic-API-compatible EAV store + Datalog + pull (swappable)
-  repo_profile.cljc machine-checkable local-query/encrypted-publish contract
+  tool.cljk        tool definitions + execution + wire-format conversion
+  parser.cljk      str / edn / json output parsers
+  memory.cljk      chat history as datoms
+  db.cljk          Datomic-API-compatible EAV store + Datalog + pull (swappable)
+  repo_profile.cljk machine-checkable local-query/encrypted-publish contract
 ```
 
 ## Design
